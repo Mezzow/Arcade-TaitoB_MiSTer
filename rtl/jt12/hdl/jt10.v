@@ -51,7 +51,8 @@ module jt10(
     output  signed  [15:0] snd_right,
     output  signed  [15:0] snd_left,
     output          snd_sample,
-    input           [ 5:0] ch_enable // ADPCM-A channels
+    input           [ 5:0] ch_enable, // ADPCM-A channels
+    input                  ym2610b    // LOCAL: six FM channels instead of four
 );
 
 // Uses 6 FM channels but only 4 are outputted
@@ -102,6 +103,7 @@ u_jt12(
     .snd_left       ( snd_left     ),
     .snd_sample     ( snd_sample   ),
     .ch_enable      ( ch_enable    ),
+    .ym2610b        ( ym2610b      ),
     // unused pins
     .en_hifi_pcm    ( 1'b0         ), // used only on YM2612 mode
     .debug_view     (              )

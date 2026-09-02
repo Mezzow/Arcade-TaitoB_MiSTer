@@ -52,6 +52,8 @@ module jt10_acc(
     input signed [15:0] adpcmA_r,
     input signed [15:0] adpcmB_l,
     input signed [15:0] adpcmB_r,
+    // YM2610B: six FM channels instead of four. LOCAL CHANGE - see below.
+    input               ym2610b,
     // combined output
     output signed [15:0] left,
     output signed [15:0] right
@@ -71,6 +73,18 @@ end
 wire left_en = rl[1];
 wire right_en= rl[0];
 wire signed [15:0] opext = { {2{op_result[13]}}, op_result };
+
+// LOCAL CHANGE (Arcade-TaitoB): YM2610B support.
+//
+// The YM2610 has four FM channels because two of the six accumulator time slots are spent
+// on its ADPCM streams instead - the two cases below replace the FM output of channels 0
+// and 4 with ADPCM-A and ADPCM-B. The YM2610B has all six FM channels AND both ADPCM
+// streams, so in that mode those slots have to carry both: the ADPCM value plus whatever
+// FM output the slot would otherwise have contributed.
+//
+// Puzzle Bobble is a YM2610B game, so without this two of its six FM channels are silent.
+wire signed [15:0] fm_extra_l = (ym2610b & sum_en & left_en)  ? (opext >>> 1) : 16'sd0;
+wire signed [15:0] fm_extra_r = (ym2610b & sum_en & right_en) ? (opext >>> 1) : 16'sd0;
 reg  signed [15:0] acc_input_l, acc_input_r;
 reg acc_en_l, acc_en_r;
 
@@ -80,8 +94,8 @@ reg acc_en_l, acc_en_r;
 always @(*)
     case( {cur_op,cur_ch} )
         {2'd0,3'd0}: begin // ADPCM-A:
-            acc_input_l = (adpcmA_l <<< 2) + (adpcmA_l <<< 1);
-            acc_input_r = (adpcmA_r <<< 2) + (adpcmA_r <<< 1);
+            acc_input_l = (adpcmA_l <<< 2) + (adpcmA_l <<< 1) + fm_extra_l;
+            acc_input_r = (adpcmA_r <<< 2) + (adpcmA_r <<< 1) + fm_extra_r;
             `ifndef NOMIX
             acc_en_l    = 1'b1;
             acc_en_r    = 1'b1;
@@ -91,8 +105,8 @@ always @(*)
             `endif
         end
         {2'd0,3'd4}: begin // ADPCM-B:
-            acc_input_l = adpcmB_l >>> 1; // Operator width is 14 bit, ADPCM-B is 16 bit
-            acc_input_r = adpcmB_r >>> 1; // accumulator width per input channel is 14 bit
+            acc_input_l = (adpcmB_l >>> 1) + fm_extra_l; // Operator width is 14 bit, ADPCM-B is 16 bit
+            acc_input_r = (adpcmB_r >>> 1) + fm_extra_r; // accumulator width per input channel is 14 bit
             `ifndef NOMIX
             acc_en_l    = 1'b1;
             acc_en_r    = 1'b1;

@@ -68,6 +68,7 @@ module jt12_top (
     output  signed  [15:0] snd_left,  // FM+PSG
     output                 snd_sample,
     input           [ 5:0] ch_enable, // ADPCM-A channels
+    input                  ym2610b,   // LOCAL: six FM channels instead of four
     input           [ 7:0] debug_bus,
     output          [ 7:0] debug_view
 );
@@ -264,6 +265,7 @@ if( use_adpcm==1 ) begin: gen_adpcm
         .adpcmA_r   ( adpcmA_r      ),
         .adpcmB_l   ( adpcmB_l      ),
         .adpcmB_r   ( adpcmB_r      ),
+        .ym2610b    ( ym2610b       ),
         // combined output
         .left       ( fm_snd_left   ),
         .right      ( fm_snd_right  )

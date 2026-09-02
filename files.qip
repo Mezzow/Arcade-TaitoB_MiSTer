@@ -1,57 +1,68 @@
-set_global_assignment -name SDC_FILE Arcade-TaitoF2.sdc
-set_global_assignment -name SYSTEMVERILOG_FILE Arcade-TaitoF2.sv
+set_global_assignment -name SDC_FILE Arcade-TaitoB.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE Arcade-TaitoB.sv
 
+# 68000
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/fx68k/hdl/fx68k.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/fx68k/hdl/fx68kAlu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/fx68k/hdl/uaddrPla.sv
 
+# Framework / infrastructure
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/pause.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate_ui.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/system_consts.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/F2.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/game_board_config.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/address_translator.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0100scn.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0110pr.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0190fmc.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0220ioc.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0200obj.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0200obj_extender.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0200obj_koshien.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0260dar.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0360pri.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0480scp.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0140syt.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0030cmd.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0430grw.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/tmp82c265.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/te7750.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram.sv
-set_global_assignment -name VERILOG_FILE rtl/jtframe_frac_cen.v
-set_global_assignment -name VERILOG_FILE rtl/jtframe_resync.v
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory_stream.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestates.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/system_consts.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/rom_loader.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_mix.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/video_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/rom_cache.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mame_keys.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/coin_pulse.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/video_timing.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/video_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_mix.sv
+# Needed even though save states are deferred: rtl/ram.sv's ram_ss_adaptor /
+# m68k_ram_ss_adaptor reference the ssbus_if interface declared in savestates.sv, and
+# savestates.sv in turn instantiates memory_stream. Dropping either breaks elaboration
+# even though nothing reachable from the top uses them; the unused logic is optimised away.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestates.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory_stream.sv
+set_global_assignment -name VERILOG_FILE rtl/jtframe_frac_cen.v
+set_global_assignment -name VERILOG_FILE rtl/jtframe_resync.v
 
-if (1) {
-    set_global_assignment -name VERILOG_MACRO "USE_AUTO_SS=1"
-    set_global_assignment -name SYSTEMVERILOG_FILE ./rtl/tv80_auto_ss.sv
-    set_global_assignment -name SYSTEMVERILOG_FILE ./rtl/jt10_auto_ss.sv
-} else {
-    set_global_assignment -name VERILOG_FILE ./rtl/tv80/tv80s.v
-    set_global_assignment -name VERILOG_FILE ./rtl/tv80/tv80_alu.v
-    set_global_assignment -name VERILOG_FILE ./rtl/tv80/tv80_reg.v
-    set_global_assignment -name VERILOG_FILE ./rtl/tv80/tv80_core.v
-    set_global_assignment -name VERILOG_FILE ./rtl/tv80/tv80_mcode.v
+# Taito B core
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/TaitoB.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/taitob_board_config.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/taitob_sound.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0180vcu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0180vcu_fb.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/taitob_video_timing.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0640fio.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/eeprom_93c46.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mb87078.sv
 
-    set_global_assignment -name QIP_FILE rtl/jt12/target/quartus/jt10.qip
-    set_global_assignment -name VERILOG_FILE ./rtl/jt12/hdl/jt12_reg_ch.v
-}
+# Taito chips shared with the upstream Taito F2 core, used unchanged
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0140syt.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0260dar.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tc0220ioc.sv
+
+# Sound: Z80 + YM2610.
+#
+# These are the auto-savestate-wrapped variants, which is the path the upstream F2 core
+# actually compiles (its files.qip picks them via `if (1)`). The plain rtl/tv80 + jt12
+# sources are NOT build-clean under Quartus: jt12_sh.v and jt12_sh_rst.v use a
+# SystemVerilog `for (int i = ...)` inside .v files, which Quartus 17.0.2 parses as
+# Verilog-2001 and rejects. Save states themselves stay deferred - TaitoB.sv ties the
+# auto_ss ports off - but using the wrappers avoids forking vendored jt12 code.
+set_global_assignment -name VERILOG_MACRO "USE_AUTO_SS=1"
+set_global_assignment -name SYSTEMVERILOG_FILE ./rtl/tv80_auto_ss.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ./rtl/jt10_auto_ss.sv
+
+# OKI M6295 for viofight and hitice - jt6295 by Jose Tejada, GPL-3.0. Only the eight
+# modules below are used: INTERPOL defaults to 0, so jtframe_fir_mono and the two .hex
+# coefficient files it would read are never instantiated.
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295.v
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295_timing.v
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295_rom.v
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295_ctrl.v
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295_adpcm.v
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295_serial.v
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295_acc.v
+set_global_assignment -name VERILOG_FILE rtl/jt6295/hdl/jt6295_sh_rst.v

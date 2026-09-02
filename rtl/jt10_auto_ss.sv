@@ -7925,6 +7925,8 @@ module jt10_acc (
     input  signed [15:0] adpcmA_r,
     input  signed [15:0] adpcmB_l,
     input  signed [15:0] adpcmB_r,
+    // LOCAL CHANGE (Arcade-TaitoB): YM2610B has six FM channels instead of four.
+    input                ym2610b,
     // combined output
     output signed [15:0] left,
     output signed [15:0] right,
@@ -7969,6 +7971,14 @@ module jt10_acc (
   wire               left_en = rl[1];
   wire               right_en = rl[0];
   wire signed [15:0] opext = {{2{op_result[13]}}, op_result};
+
+  // LOCAL CHANGE (Arcade-TaitoB): the YM2610 spends two accumulator slots on its ADPCM
+  // streams, which is why it has four FM channels and not six. The YM2610B has all six AND
+  // both ADPCM streams, so in that mode those slots carry the ADPCM value plus whatever FM
+  // output the slot would otherwise have contributed. Mirrors rtl/jt12/hdl/jt10_acc.v; if
+  // this file is ever regenerated the change comes back from there.
+  wire signed [15:0] fm_extra_l = (ym2610b & sum_en & left_en) ? (opext >>> 1) : 16'sd0;
+  wire signed [15:0] fm_extra_r = (ym2610b & sum_en & right_en) ? (opext >>> 1) : 16'sd0;
   reg signed [15:0] acc_input_l, acc_input_r;
   reg acc_en_l, acc_en_r;
 
@@ -7982,8 +7992,8 @@ module jt10_acc (
       {
         2'd0, 3'd0
       } : begin  // ADPCM-A:
-        acc_input_l = (adpcmA_l <<< 2) + (adpcmA_l <<< 1);
-        acc_input_r = (adpcmA_r <<< 2) + (adpcmA_r <<< 1);
+        acc_input_l = (adpcmA_l <<< 2) + (adpcmA_l <<< 1) + fm_extra_l;
+        acc_input_r = (adpcmA_r <<< 2) + (adpcmA_r <<< 1) + fm_extra_r;
 
         acc_en_l    = 1'b1;
         acc_en_r    = 1'b1;
@@ -7992,8 +8002,8 @@ module jt10_acc (
       {
         2'd0, 3'd4
       } : begin  // ADPCM-B:
-        acc_input_l = adpcmB_l >>> 1;  // Operator width is 14 bit, ADPCM-B is 16 bit
-        acc_input_r = adpcmB_r >>> 1;  // accumulator width per input channel is 14 bit
+        acc_input_l = (adpcmB_l >>> 1) + fm_extra_l;  // Operator width 14 bit, ADPCM-B 16
+        acc_input_r = (adpcmB_r >>> 1) + fm_extra_r;  // accumulator is 14 bit per input
 
         acc_en_l    = 1'b1;
         acc_en_r    = 1'b1;
@@ -9694,6 +9704,7 @@ module jt12_top (
     output signed [15:0] snd_left,  // FM+PSG
     output snd_sample,
     input [5:0] ch_enable,  // ADPCM-A channels
+    input ym2610b,  // LOCAL (Arcade-TaitoB): six FM channels instead of four
     input [7:0] debug_bus,
     output [7:0] debug_view,
     input auto_ss_rd,
@@ -9993,6 +10004,7 @@ module jt12_top (
           .adpcmA_r               (adpcmA_r),
           .adpcmB_l               (adpcmB_l),
           .adpcmB_r               (adpcmB_r),
+          .ym2610b                (ym2610b),
           // combined output
           .left                   (fm_snd_left),
           .right                  (fm_snd_right),
@@ -10587,6 +10599,7 @@ module jt10 (
     output signed [15:0] snd_left,
     output snd_sample,
     input [5:0] ch_enable,
+    input ym2610b,  // LOCAL (Arcade-TaitoB): six FM channels instead of four
     input auto_ss_rd,
     input auto_ss_wr,
     input [31:0] auto_ss_data_in,
@@ -10662,6 +10675,7 @@ module jt10 (
       .snd_left(snd_left),
       .snd_sample(snd_sample),
       .ch_enable(ch_enable),
+      .ym2610b(ym2610b),
       // unused pins
       .en_hifi_pcm(1'b0),  // used only on YM2612 mode
       .debug_view(),

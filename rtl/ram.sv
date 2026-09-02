@@ -203,6 +203,19 @@ defparam
     altsyncram_component.outdata_reg_a = "UNREGISTERED",
     altsyncram_component.outdata_reg_b = "UNREGISTERED",
     altsyncram_component.power_up_uninitialized = "FALSE",
+    // MIXED-port read-during-write matters as much as the same-port setting, and leaving it
+    // unspecified defaults it to DONT_CARE: if one port writes an address while the other
+    // reads that same address in the same cycle, the reading port's output is UNDEFINED on
+    // real silicon. Verilator returns the old value deterministically, so a sim can never
+    // show it. In this core the 68000 writes VRAM on port A while the TC0180VCU's renderer
+    // reads it on port B every cycle, so a collision yields a garbage tile code for one
+    // fetch - and a code that lands on a blank tile renders fully transparent, showing the
+    // layer beneath for a single frame.
+    //
+    // OLD_DATA is supported by M10K in true dual-port when both ports share a clock, which
+    // they do here, and it is what the Verilator model already does - so this makes the
+    // hardware match the simulation instead of being free to differ from it.
+    altsyncram_component.read_during_write_mode_mixed_ports = "OLD_DATA",
     altsyncram_component.read_during_write_mode_port_a = "NEW_DATA_NO_NBE_READ",
     altsyncram_component.read_during_write_mode_port_b = "NEW_DATA_NO_NBE_READ",
     altsyncram_component.widthad_a = WIDTHAD,

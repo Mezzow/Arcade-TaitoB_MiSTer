@@ -24,6 +24,18 @@ module TC0140SYT(
     input       [3:0] Din,
     output reg  [3:0] Dout,
 
+    // Z80 page the slave port answers on. 0xE2 on every TC0140SYT board; the PC060HA is
+    // the same silicon wired at 0xA0 (MAME derives pc060ha_device from tc0140syt_device
+    // with no overridden behaviour, so only the board's address decode differs).
+    input       [7:0] slave_page,
+
+    // Level-driven NMI to the sound Z80, exactly as MAME's update_nmi(): asserted while a
+    // 68000 -> Z80 port pair is full and the driver has enabled NMI with slave mode 6. The
+    // Z80 clears it by reading the port. Upstream computed nmi_enabled and then never used
+    // it - there was no NMI output at all - so the sound CPU never learned a command had
+    // arrived and no note was ever keyed on.
+    output            NMIn,
+
     output            ROUTn,
     output            ROMCS0n,
     output            ROMCS1n,
@@ -62,6 +74,8 @@ reg nmi_enabled;
 reg [15:0] slave_data;
 reg [15:0] master_data;
 
+assign NMIn = ~(nmi_enabled & |status_reg[1:0]);
+
 wire bank_req = A[15:14] == 2'b01; // 0x4000-0x7fff
 assign ROMCS0n = bank_req ? rom_bank[2] : A[15] | A[14]; // 0x0000 - 0x7fff
 assign ROMCS1n = ~(bank_req & rom_bank[2]); // FIXME - guessing
@@ -73,7 +87,7 @@ assign OPXn = ~(A[15:8] == 8'he0);
 
 assign ROUTn = RESn & ~reset_reg; // FIXME: don't think this is correct, software reset out
 
-wire slave_access = (A[15:8] == 8'he2) & ~MREQn;
+wire slave_access = (A[15:8] == slave_page) & ~MREQn;
 wire master_access = ~MCSn;
 reg prev_slave_access;
 reg prev_master_access;

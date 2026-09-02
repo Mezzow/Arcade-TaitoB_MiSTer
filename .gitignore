@@ -1,9 +1,8 @@
 output_files/
-roms/
-build_id.v
-**/.DS_Store
-*.bak
 db/
 incremental_db/
-deploy.done
-
+build_id.v
+*.bak
+*.qws
+roms/
+**/.DS_Store

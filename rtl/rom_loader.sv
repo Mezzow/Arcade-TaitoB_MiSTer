@@ -42,7 +42,14 @@ module rom_loader
     output [7:0] bram_data,
     output bram_wr,
 
-    output board_cfg_t board_cfg
+    output board_cfg_t board_cfg,
+
+    // Declared size of region 1, the TC0180VCU graphics. The hardware wraps a tile or
+    // sprite code by the number of elements in that region, and the region size is a
+    // per-SET fact that the ROM image already carries in its own header - so read it here
+    // rather than keeping a per-BOARD table, which several sets share and which therefore
+    // hands an aliased set the size of whatever board it was aliased onto.
+    output reg [23:0] gfx_region_size
 );
 
 
@@ -69,6 +76,10 @@ typedef enum {
 } stage_t;
 
 stage_t stage = BOARD_CFG_0;
+
+// 1 MiB until the header says otherwise: the smallest region any Taito B set declares, so a
+// mask built from it can never reach past a region that was never loaded.
+initial gfx_region_size = 24'h100000;
 
 int region = 0;
 
@@ -104,6 +115,8 @@ always @(posedge sys_clk) begin
         SIZE_1: if (ioctl_wr) begin size[15:8] <= ioctl_data; stage <= SIZE_2; end
         SIZE_2: if (ioctl_wr) begin
             size[7:0] <= ioctl_data;
+            if (region == 1 && {size[23:8], ioctl_data} != 24'd0)
+                gfx_region_size <= {size[23:8], ioctl_data};
             base_addr <= LOAD_REGIONS[region].base_addr;
             storage <= LOAD_REGIONS[region].storage;
             encoding <= LOAD_REGIONS[region].encoding;
@@ -208,6 +221,7 @@ module ddr_rom_loader_adaptor #(
     output logic data_strobe,
     output logic [7:0] data,
 
+
     ddr_if.to_host ddr
 );
 
@@ -286,13 +300,20 @@ always_ff @(posedge clk) begin
 
         DDR_WAIT: begin
             ddr.acquire <= 1;
-            if (~ddr.busy) begin
+            // `busy` (waitrequest) says the command port cannot take a NEW command;
+            // `rdata_ready` (readdatavalid) is independent of it and may pulse while busy
+            // is still asserted. Sampling the data only under ~busy - as this did - drops
+            // the pulse whenever the two overlap, and the loader then waits forever with
+            // rom_load_busy stuck high, so the CPU never leaves reset and the screen stays
+            // black. tc0180vcu_fb.sv samples rdata_ready unconditionally, which is why the
+            // framebuffer path never hit this. Clearing `read` still belongs under ~busy:
+            // that is the handshake that retires the command.
+            if (~ddr.busy) ddr.read <= 0;
+            if (ddr.rdata_ready) begin
+                buffer  <= ddr.rdata;
                 ddr.read <= 0;
-                if (ddr.rdata_ready) begin
-                    buffer <= ddr.rdata;
-                    ddr.acquire <= 0;
-                    state <= OUTPUT_DATA;
-                end
+                ddr.acquire <= 0;
+                state <= OUTPUT_DATA;
             end
         end
 
