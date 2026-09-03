@@ -83,9 +83,12 @@ GPL-3.0.
 | Tetris (Nastar conversion kit) | `tetrist` | TC0220IOC, CPU-drawn framebuffer | plays on hardware; pixel-exact in simulation |
 | Violence Fight | `viofight` | TC0220IOC, PC060HA, YM2203 + M6295 | plays on hardware |
 
-The core's board table covers all 18 machine configurations in MAME's `taito_b.cpp` driver, but
-only the 16 sets above have MRAs and have been tested. The remaining sets (clones and regional
-variants, `qzshowby`, `tetrista`, `rambo3p`, `spacedxo`) are untested.
+The core's board table covers all 18 machine configurations in MAME's `taito_b.cpp` driver.
+`releases/` carries **39 MRAs** - every set in the driver for which a romset exists, except
+`hiticej`, which is the only one that switches on Hit the Ice's CPU-drawn pixel layer and is
+therefore deliberately omitted. The 16 sets listed above are the ones checked frame-by-frame
+against MAME; the other 23 are clones and regional variants, booted to attract mode on
+hardware but not put through the golden-frame gate.
 
 ## Installation
 
@@ -143,7 +146,8 @@ to `output_files/Arcade-TaitoB.rbf`.
   and cross-checked against it. Every MRA's ROM stream is verified byte-for-byte against the
   image the bench runs.
 - All 16 games were booted, coined and played on a MiSTer. Puzzle Bobble screenshots taken from
-  the device are pixel-identical to MAME frames.
+  the device are pixel-identical to MAME frames. The 23 further sets were booted to attract mode
+  on the device as well.
 
 The verification harness is not part of this repository.
 
