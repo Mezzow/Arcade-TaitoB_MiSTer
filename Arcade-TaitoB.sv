@@ -631,7 +631,7 @@ wire       pause_dim      = ~status[39];
 wire [7:0] pause_r, pause_g, pause_b;
 wire system_pause;
 
-pause #(.CLKSPD(53)) pause(
+pause #(.CLKSPD(54)) pause(
     .clk_sys,
     .reset,
     .user_button(input_combined[BTN_PAUSE]),

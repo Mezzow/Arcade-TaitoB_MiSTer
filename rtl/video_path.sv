@@ -89,6 +89,9 @@ video_mixer #(.LINE_LENGTH(324), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
     .hq2x(scandoubler_fx == 1),
     .gamma_bus(gamma_bus),
 
+    .HDMI_FREEZE(1'b0),
+    .freeze_sync(),
+
     .HBlank(core_hb),
     .VBlank(core_vb),
     .HSync(resync_hs),

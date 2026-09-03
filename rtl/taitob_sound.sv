@@ -311,7 +311,7 @@ assign audio_sample = cfg_ym2203 ? sample3    : sample10;
 // ---- OKI M6295 (viofight, hitice) -----------------------------------------------------
 // One register, no address input - MAME maps b000 AND b001 to the same chip and says so.
 // MAME clocks it at 1056000 Hz with PIN7_HIGH, which is jt6295's ss=1 (divide by 132).
-// 53.372 * 13/657 = 1.056067 MHz.
+// 54.328 * 9/463 = 1.056052 MHz.
 // W=2, not 1: with W=1 the module's own output assignment is
 //     cen <= { toggle[W-2:0], 1'b1 };
 // which is toggle[-1:0] - an illegal part select that Verilator only tolerates because the
@@ -320,8 +320,8 @@ wire ce_1m, ce_500k_unused;
 jtframe_frac_cen #(2) cen_oki(
     .clk(clk),
     .cen_in(1'b1),
-    .n(10'd13),
-    .m(10'd657),
+    .n(10'd9),
+    .m(10'd463),
     .cen({ce_500k_unused, ce_1m}),
     .cenb()
 );

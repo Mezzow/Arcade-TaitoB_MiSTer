@@ -11,14 +11,14 @@ module audio_mix(
 
 );
 
-// 2mhz, 4mhz
+// 2mhz, 4mhz: 54.328 * 55/747 = 4.000054 MHz, halved to 2.000027 for the filters.
 wire ce_2x, ce;
 jtframe_frac_cen #(2) mix_cen
 (
     .clk(clk),
     .cen_in(1),
-    .n(10'd35),
-    .m(10'd467),
+    .n(10'd55),
+    .m(10'd747),
     .cen({ce, ce_2x}),
     .cenb()
 );
@@ -29,7 +29,7 @@ wire [15:0] stage1_out_l, stage1_out_r;
 reg [15:0] stage2_in_l, stage2_in_r;
 wire [15:0] stage2_out_l, stage2_out_r;
 
-// 4th-order Butterworth, -3 dB at 15 kHz, at the ce this actually runs at (2.000021 MHz).
+// 4th-order Butterworth, -3 dB at 15 kHz, at the ce this actually runs at (2.000027 MHz).
 // The previous coefficients swung 15.83 dB across 100 Hz-10 kHz with a +3.80 dB hump at
 // 3.6 kHz and a -3 dB corner at 6.0 kHz - measured on the RTL, not derived. That hump also
 // cost 3.18 dB of PEAK headroom, which is why re-cornering is not only fidelity work: it is

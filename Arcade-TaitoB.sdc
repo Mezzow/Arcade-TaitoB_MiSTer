@@ -13,7 +13,7 @@ derive_clock_uncertainty
 #
 # Those filters are entirely clock-enabled: every register in sys/iir_filter.v is
 #     always @(posedge clk) if (ce)
-# and audio_mix drives ce from a fractional divider at 4.00 MHz (53.372 * 35/467) - one
+# and audio_mix drives ce from a fractional divider at 4.00 MHz (54.328 * 55/747) - one
 # pulse every ~13 clk_sys cycles. STA cannot infer that, so it times a thirteen-cycle path
 # as if it had a single cycle. The logic has always had ~245 ns to settle; nothing about
 # the hardware changes here, only what the analyser is told.

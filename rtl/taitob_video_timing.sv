@@ -9,9 +9,17 @@
 //   Taito F2   26.686 MHz / 4 = 6.6715 MHz,  H 424 x V 262  -> 15.735 kHz / 60.06 Hz
 //   Taito B    27.164 MHz / 4 = 6.791  MHz,  H 448 x V 253  -> 15.158 kHz / 59.92 Hz
 //
-// Reusing F2's numbers would run the game about 2% slow. ce_13m is a fractional enable off
-// the 53.372 MHz clk_sys (71/279 = 13.582122 MHz, halved here) so the dot clock is
-// 6.791061 MHz whatever clk_sys happens to be. See TaitoB.sv's clock-enable block.
+// Reusing F2's numbers would run the game about 2% slow, so clk_sys is 54.328 MHz - exactly
+// 8 x the Taito B dot clock. ce_13m is clk_sys / 4 and this module halves it again, so
+// ce_pixel is an exact divide-by-8 of CLK_VIDEO.
+//
+// THAT INTEGER RATIO IS LOAD-BEARING, not a tidiness preference. sys/video_mixer.sv requires
+// "CLK_VIDEO should be multiple by (ce_pix*4)": sys/scandoubler.v regenerates its own pixel
+// enable from the measured pixel period, and Direct Video hands the raster to the HDMI
+// transmitter at CLK_VIDEO granularity. A fractional dot clock jitters by one clk_sys cycle,
+// which slipped the scandoubler about 6 pixels per line and made the H total sent over HDMI
+// alternate between 3520 and 3521 - the RetroTINK 4K DV1 black lines of issue #1.
+// See TaitoB.sv's clock-enable block.
 //
 // THE TOTALS ARE A JUDGEMENT CALL. MAME does not raw-configure
 // this screen, so H and V total are undocumented. What is known:

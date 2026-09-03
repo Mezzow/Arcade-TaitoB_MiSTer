@@ -143,23 +143,40 @@ taitob_board_config board_config(
 // ------------------------------------------------------------------------------------
 // Clock enables
 //
-// clk_sys is 53.372 MHz - F2's clock, adopted because 53.372/106.744 is a clean 2:1 that
-// meets timing while the ideal 54.328 MHz has no integer common VCO with a usable sys clock
-// (101.865 MHz, the 15/8 compromise, built but failed timing at -4.589 ns).
+// clk_sys is 54.328 MHz - exactly 8 x the 6.791 MHz TC0180VCU dot clock, with clk_sdr at
+// 108.656 MHz as a clean 2:1.
 //
-// So clk_sys is NOT 8 x the 6.791 MHz dot clock, and EVERY rate below has to be a fractional
-// enable computed for 53.372 - including the dot clock. A plain divide by 8 would run the
-// whole core 1.76% slow (58.9 Hz, a 68000 at 11.79 MHz, music a third of a semitone flat).
-// All ratios are within 10 ppm of the real chip rates:
+// THE DOT CLOCK MUST BE AN INTEGER DIVISION OF clk_sys. sys/video_mixer.sv states it in one
+// line - "CLK_VIDEO should be multiple by (ce_pix*4)" - and CLK_VIDEO is clk_sys. The core
+// briefly ran at F2's 53.372 MHz with the dot clock as a fractional enable (71/279, halved),
+// a ratio of 7.859, and both halves of the framework that resample the pixel stream broke:
+//
+//   * sys/scandoubler.v does not sample on ce_pix. It measures the pixel period into pixsz
+//     and free-runs a regenerated enable at that period, resynced only on the HSync rising
+//     edge - which sits at hcnt 352, after the visible area. With the period alternating
+//     7/8 the regenerator slipped about 6 pixels by the end of every active line, and the
+//     slip pattern moved frame to frame. Any Scandoubler FX shimmered and tore.
+//   * In Direct Video, sys/sys_top.v clocks the HDMI transmitter straight off clk_vid and
+//     forwards this raster verbatim. A line was 448 x 558/71 = 3520.9 clk cycles, so the
+//     H total sent over HDMI alternated 3520/3521 and a sink reconstructing the source
+//     raster dropped lines. That is issue #1 (black lines on a RetroTINK 4K in DV1).
+//
+// 53.372 was originally adopted because 108.656 MHz SDRAM was blamed for a black screen.
+// That diagnosis was wrong - the black screen was a dropped readdatavalid in the DDR ROM
+// loader plus the MRA map= byte order, both fixed since - so the objection to 54.328 is
+// gone. Do not "simplify" clk_sys back to F2's value.
+//
+// Every other rate is still a fractional enable, now computed for 54.328 and all within
+// 50 ppm of the real chip rates:
 //   68000     12 MHz (16 MHz on qzshowby)
 //   YM2610     8 MHz
 //   Z80        4 MHz  (6 MHz on masterw / hitice / viofight / realpunc - see below)
-//   TC0180VCU  6.791 MHz dot clock
+//   TC0180VCU  6.791 MHz dot clock - a plain divide by 8, see cen_video below
 // ------------------------------------------------------------------------------------
 
-// 12 MHz: 53.372 * 172/765 = 11.999979.  16 MHz: 53.372 * 277/924 = 16.000048.
-wire [9:0] cpu_cen_n = cfg_cpu_16mhz ? 10'd277 : 10'd172;
-wire [9:0] cpu_cen_m = cfg_cpu_16mhz ? 10'd924 : 10'd765;
+// 12 MHz: 54.328 * 201/910 = 11.999921.  16 MHz: 54.328 * 177/601 = 16.000093.
+wire [9:0] cpu_cen_n = cfg_cpu_16mhz ? 10'd177 : 10'd201;
+wire [9:0] cpu_cen_m = cfg_cpu_16mhz ? 10'd601 : 10'd910;
 
 wire ce_12m, ce_cpu_half;
 jtframe_frac_cen #(2) cen_cpu(
@@ -193,20 +210,20 @@ always_ff @(posedge clk) begin
     end
 end
 
-// YM2610 8 MHz, Z80 4 MHz: 53.372 * 137/914 = 7.999961, halved by frac_cen for the Z80.
+// YM2610 8 MHz, Z80 4 MHz: 54.328 * 67/455 = 7.999947, halved by frac_cen for the Z80.
 wire ce_8m, ce_4m;
 jtframe_frac_cen #(2) cen_audio(
     .clk(clk),
     .cen_in(~pause),
-    .n(10'd137),
-    .m(10'd914),
+    .n(10'd67),
+    .m(10'd455),
     .cen({ce_4m, ce_8m}),
     .cenb()
 );
 
 // masterw, hitice, viofight and realpunc clock the Z80 at 6 MHz (12 MHz XTAL / 2) while
 // still running the YM at 8, so it needs its own divider rather than a tap off the audio
-// one. 53.372 * 86/765 = 5.999990 MHz.
+// one. 54.328 * 55/498 = 6.000080 MHz.
 // The halved output is not spare: 24 MHz / 8 = 3 MHz is exactly the YM2203 clock on the
 // four PC060HA boards, and they are the same four boards that run the Z80 at 6 MHz, so one
 // divider serves both and the two stay in exact ratio.
@@ -214,8 +231,8 @@ wire ce_6m, ce_3m;
 jtframe_frac_cen #(2) cen_z80_6m(
     .clk(clk),
     .cen_in(~pause),
-    .n(10'd86),
-    .m(10'd765),
+    .n(10'd55),
+    .m(10'd498),
     .cen({ce_3m, ce_6m}),
     .cenb()
 );
@@ -226,24 +243,24 @@ wire ce_z80 = cfg_z80_6mhz ? ce_6m : ce_4m;
 // Video timing
 //
 // 320x224 visible, H total 448, V total 253. ce_13m is 2x the 6.791 MHz dot clock:
-// 53.372 * 71/279 = 13.582122 MHz, halved by taitob_video_timing's ce_div, giving
-// 6.791061 MHz and 6.791061e6 / (448 * 253) = 59.925 Hz. See
-// rtl/taitob_video_timing.sv for why those totals were chosen - MAME does not
-// raw-configure this screen, so they are a documented judgement call, not a fact.
+// clk_sys / 4 = 13.582 MHz, halved again by taitob_video_timing's ce_div, giving
+// 6.791 MHz and 6.791e6 / (448 * 253) = 59.915 Hz. See rtl/taitob_video_timing.sv for
+// why those totals were chosen - MAME does not raw-configure this screen, so they are a
+// documented judgement call, not a fact.
+//
+// This is a COUNTER, not a jtframe_frac_cen, and that is the whole reason clk_sys is
+// 54.328 MHz. The framework resamples the pixel stream twice - once in sys/scandoubler.v,
+// once when Direct Video forwards the raster to HDMI - and both assume evenly spaced
+// pixels. A fractional enable jitters by a clock and breaks both. See the clock-enable
+// header above.
 // ------------------------------------------------------------------------------------
 wire       ce_13m;
 wire       global_hsync, global_hblank, global_vsync, global_vblank;
 wire [8:0] global_hcnt, global_vcnt;
 
-jtframe_frac_cen #(2) cen_video(
-    .clk(clk),
-    .cen_in(1'b1),
-    .n(10'd71),
-    .m(10'd279),
-    .cen({ce_video_unused, ce_13m}),
-    .cenb()
-);
-wire ce_video_unused;   // frac_cen always emits a halved rate; the raster needs only ce_13m
+reg [1:0] video_div;
+always_ff @(posedge clk) video_div <= video_div + 2'd1;
+assign ce_13m = &video_div;
 
 taitob_video_timing video_timing(
     .clk(clk),
