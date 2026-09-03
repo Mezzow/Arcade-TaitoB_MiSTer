@@ -316,7 +316,11 @@ end
 // with COIN ERROR, which says nothing about polarity.
 always_comb begin
     case (game)
-        GAME_RAMBO3, GAME_RAMBO3P: cfg_coin_hi = 1'b1;   // rambo3p not verified - no ROM here
+        // Both verified on hardware now that the romsets are here: rambo3p reaches attract
+        // mode and its coin starts the game (the JOHN RAMBO intro), and rambo3u - which is
+        // GAME_RAMBO3 - does the same. The note that used to sit here said rambo3p was
+        // unverified because no ROM was available; it is.
+        GAME_RAMBO3, GAME_RAMBO3P: cfg_coin_hi = 1'b1;
         default:                   cfg_coin_hi = 1'b0;
     endcase
 end
