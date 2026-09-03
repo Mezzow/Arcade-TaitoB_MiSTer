@@ -385,3 +385,39 @@ defparam
 `endif
 endmodule
 
+
+// ------------------------------------------------------------------------------------
+// 16-bit dual-port RAM with byte enables on port A.
+//
+// Built from two byte-wide dualport_ram_unreg instances because that primitive has no
+// byte-enable support and the 68000 needs UDS/LDS granularity. Port B is a read-only
+// 16-bit port for a video reader.
+//
+// Used by the TC0180VCU for VRAM, sprite RAM and the scroll/upper regions, and by the
+// TC0260DAR for the palette. The name is historical - it is not VCU-specific.
+// ------------------------------------------------------------------------------------
+module vcu_ram16 #(
+    parameter WIDTHAD = 15
+) (
+    input                    clk,
+
+    input      [WIDTHAD-1:0] addr_a,
+    input             [15:0] data_a,
+    input              [1:0] be_a,     // {upper, lower} write enables
+    output            [15:0] q_a,
+
+    input      [WIDTHAD-1:0] addr_b,
+    output            [15:0] q_b
+);
+
+dualport_ram_unreg #(.WIDTH(8), .WIDTHAD(WIDTHAD)) lo(
+    .clock_a(clk), .wren_a(be_a[0]), .address_a(addr_a), .data_a(data_a[7:0]),  .q_a(q_a[7:0]),
+    .clock_b(clk), .wren_b(1'b0),    .address_b(addr_b), .data_b(8'd0),         .q_b(q_b[7:0])
+);
+
+dualport_ram_unreg #(.WIDTH(8), .WIDTHAD(WIDTHAD)) hi(
+    .clock_a(clk), .wren_a(be_a[1]), .address_a(addr_a), .data_a(data_a[15:8]), .q_a(q_a[15:8]),
+    .clock_b(clk), .wren_b(1'b0),    .address_b(addr_b), .data_b(8'd0),         .q_b(q_b[15:8])
+);
+
+endmodule

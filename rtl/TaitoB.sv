@@ -751,18 +751,31 @@ mb87078 mb87078(
 // ------------------------------------------------------------------------------------
 wire [15:0] dar_data_out;
 wire        dar_dtack_n;
-wire [13:0] dar_ram_addr;
-wire [15:0] dar_ram_dout, color_ram_q;
+wire [13:0] dar_ram_addr, dar_ram_vaddr;
+wire [15:0] dar_ram_dout, color_ram_q, color_ram_vq;
 wire        dar_ram_we_l_n, dar_ram_we_h_n;
 wire        dar_hblank_n, dar_vblank_n;
 
-m68k_ram #(.WIDTHAD(14)) color_ram(
-    .clock(clk),
-    .address(dar_ram_addr),
-    .we_lds_n(dar_ram_we_l_n),
-    .we_uds_n(dar_ram_we_h_n),
-    .data(dar_ram_dout),
-    .q(color_ram_q)
+// DUAL-PORT, and that is the point. As a single-port RAM the CPU and the raster had to share
+// one address bus, so every 68000 palette access during active display stole the video's read
+// slot and the TC0260DAR emitted a black pixel for it - visible as diagonal streaks during
+// any palette fade, and the last contended RAM in the core. Port A is the CPU, port B is the
+// raster, and neither can disturb the other.
+//
+// Same M10K cost as the single-port instance it replaces: 16384x16 single-port measured 32
+// blocks, and two 16384x8 true-dual-port halves come to the same 32.
+//
+// A simultaneous CPU write and video read of the SAME entry is don't-care on altsyncram - it
+// yields the old or the new colour for one pixel. Harmless, and far closer to the real chip
+// than blacking the pixel.
+vcu_ram16 #(.WIDTHAD(14)) color_ram(
+    .clk(clk),
+    .addr_a(dar_ram_addr),
+    .data_a(dar_ram_dout),
+    .be_a({~dar_ram_we_h_n, ~dar_ram_we_l_n}),
+    .q_a(color_ram_q),
+    .addr_b(dar_ram_vaddr),
+    .q_b(color_ram_vq)
 );
 
 TC0260DAR tc0260dar(
@@ -807,7 +820,10 @@ TC0260DAR tc0260dar(
     .RDin(color_ram_q),
     .RDout(dar_ram_dout),
     .RWELn(dar_ram_we_l_n),
-    .RWEHn(dar_ram_we_h_n)
+    .RWEHn(dar_ram_we_h_n),
+
+    .RA_VID(dar_ram_vaddr),
+    .RDIN_VID(color_ram_vq)
 );
 
 wire [7:0] dar_red, dar_grn, dar_blu;
