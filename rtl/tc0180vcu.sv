@@ -438,6 +438,7 @@ end
 // ------------------------------------------------------------------------------------
 localparam [8:0] H_TOTAL = 9'd448;
 localparam [8:0] V_TOTAL = 9'd253;
+localparam [8:0] V_START = 9'd16;    // first visible bitmap line; see taitob_video_timing.sv
 
 // Scroll RAM lives in upper RAM: device byte 13800 -> word 09C00 -> upper index 1C00.
 // Plane 0 (FG) occupies 1C00-1DFF, plane 1 (BG) 1E00-1FFF, as {x,y} word pairs per line.
@@ -485,6 +486,39 @@ wire [8:0] bg_cnt_n   = bg_new_blk ? 9'd1 : (bg_blk_cnt + 9'd1);
 
 reg [15:0] sx_fg, sy_fg, sx_bg, sy_bg;
 
+// SAMPLE PER BLOCK, NOT PER LINE.
+//
+// The walk below visits every line, but a plane's scroll pair is only COMMITTED when that
+// plane's block begins, plus once at the first visible line. Re-committing every line made
+// the chip honour a CPU write that lands mid-frame, which MAME cannot do - it reads
+// scrollram once per block at screen_update (tc0180vcu.cpp: set_scrollx/set_scrolly then
+// draw, per block, clipped by min_y).
+//
+// WHAT IS MEASURED HERE, AND WHAT IS NOT. A scanline-binned tap over 5000 frames of ashura
+// in MAME: FGx/BGx are written from the vblank ISR, pinned at line 10 with 0.6 lines of
+// jitter, while FGy/BGy are written from the main loop - 1041 updates out of 1041 inside
+// active display, wandering 14.3 lines between them. That much is measurement. A video
+// capture of the real PCB then showed no tear where this core showed one - but ashura's Y
+// moves only 1-2 px, about once every five frames, and a seam that small at a wandering
+// line can sit below what a capture resolves. "No tear seen" is weaker than "no tear".
+//
+// The test that would settle it, unrun: ashura's attract loop resets scroll mid-frame by
+// 437 px at visible line 41, on a frame with zero VRAM writes, about 36 s after boot and
+// every 41 s after. A per-line chip must render that one frame as a single picture split
+// into two halves offset by 437 px, which no capture could miss.
+//
+// Sampling at next_v == V_START rather than at bitmap line 0 is deliberate: every other
+// game in the set writes scroll during vblank, and line 0 is early enough in vblank to miss
+// some of those writes. Committing at the first visible line takes the post-write value, so
+// those games are bit-identical to the per-line behaviour they had before.
+//
+// The flags are PER PLANE. FG and BG can carry different lines_per_block, and a shared
+// trigger would let a BG block boundary commit a mid-frame write to the FG pair.
+//
+// Only the commits are gated - the address walk and the RAM accesses are unchanged, so this
+// costs no cycles and moves no other timing.
+reg fg_smp, bg_smp;
+
 reg [2:0] sstate;
 localparam [2:0] S_IDLE = 3'd7;
 
@@ -496,21 +530,24 @@ always_ff @(posedge clk) begin
         sx_bg <= 16'd0; sy_bg <= 16'd0;
         fg_blk_base <= 8'd0; fg_blk_cnt <= 9'd1;
         bg_blk_base <= 8'd0; bg_blk_cnt <= 9'd1;
+        fg_smp <= 1'b0; bg_smp <= 1'b0;
     end else begin
         case (sstate)
             S_IDLE: if (ce_pixel && hcnt == 9'd400) begin
                 fg_blk_base   <= fg_base_n; fg_blk_cnt <= fg_cnt_n;
                 bg_blk_base   <= bg_base_n; bg_blk_cnt <= bg_cnt_n;
+                fg_smp        <= fg_new_blk | (next_v == V_START);
+                bg_smp        <= bg_new_blk | (next_v == V_START);
                 scroll_rd_addr <= SCROLL_FG + {4'd0, fg_base_n, 1'b0};
                 sstate        <= 3'd0;
             end
             // upper_rd_addr is a register and the RAM registers it again, so the data for
             // the address set in state N can be read in state N+1.
             3'd0: begin scroll_rd_addr <= SCROLL_FG + {4'd0, fg_blk_base, 1'b0} + 13'd1; sstate <= 3'd1; end
-            3'd1: begin scroll_rd_addr <= SCROLL_BG + {4'd0, bg_blk_base, 1'b0};         sstate <= 3'd2; sx_fg <= scroll_rd_q; end
-            3'd2: begin scroll_rd_addr <= SCROLL_BG + {4'd0, bg_blk_base, 1'b0} + 13'd1; sstate <= 3'd3; sy_fg <= scroll_rd_q; end
-            3'd3: begin sstate <= 3'd4;   sx_bg <= scroll_rd_q; end
-            3'd4: begin sstate <= S_IDLE; sy_bg <= scroll_rd_q; end
+            3'd1: begin scroll_rd_addr <= SCROLL_BG + {4'd0, bg_blk_base, 1'b0};         sstate <= 3'd2; if (fg_smp) sx_fg <= scroll_rd_q; end
+            3'd2: begin scroll_rd_addr <= SCROLL_BG + {4'd0, bg_blk_base, 1'b0} + 13'd1; sstate <= 3'd3; if (fg_smp) sy_fg <= scroll_rd_q; end
+            3'd3: begin sstate <= 3'd4;   if (bg_smp) sx_bg <= scroll_rd_q; end
+            3'd4: begin sstate <= S_IDLE; if (bg_smp) sy_bg <= scroll_rd_q; end
             default: sstate <= S_IDLE;
         endcase
     end
@@ -648,7 +685,13 @@ always_ff @(posedge clk) begin
 
             // Five VRAM reads, pipelined one address per cycle with the data trailing by
             // one state. The render port is a dedicated BRAM port, so none of this ever
-            // contends with the 68000.
+            // contends with the 68000 - a deliberate deviation, not a claim about the chip.
+            // VRAM is external on the real board, so it is one bus and the VCU must grant
+            // the CPU slots. Measured cost of not modelling that: the renderer takes 44,800
+            // of the 71,680 active-display slots and the 68000 asks for about 44 of the rest,
+            // so slot arbitration would cost 0.06% of its cycles in a typical frame. Left
+            // out because it cannot account for any known residual; it only reaches a few
+            // percent during a stage load.
             T_V1: begin vram_rd_addr <= bg_code_page + {3'd0, f_bg_index}; fstate <= T_V2; end
             T_V2: begin vram_rd_addr <= bg_attr_page + {3'd0, f_bg_index}; fstate <= T_V3; tx_word_r <= vram_rd_q; end
             // The TX graphics address only needs tx_word_r, which lands here - so the TX
