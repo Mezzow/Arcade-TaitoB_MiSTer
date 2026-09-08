@@ -458,6 +458,15 @@ wire [8:0] fetch_v_raw = line_wrap ? next_v : vcnt;
 // rows 239..16, which is the same set, so nothing moves off screen.
 wire [8:0] fetch_v     = flip ? (9'd254 - fetch_v_raw) : fetch_v_raw;
 
+// Will the group being fetched right now actually be shown? This is the gate the
+// missed-deadline meter needs, and it is NOT "the beam is not in hblank": because the fetch
+// runs two groups ahead and wraps onto the next line, the two groups that fill screen
+// columns 0-15 are fetched at hcnt 432 and 440 - inside hblank. Gating the meter on ~hblank
+// therefore threw away exactly the misses that land at the left edge of the picture, and it
+// read zero by construction. fetch_h and fetch_v_raw already name the destination.
+wire fetch_visible = (fetch_h < 9'd320)
+                  && (fetch_v_raw >= V_START) && (fetch_v_raw < 9'd240);
+
 // ------------------------------------------------------------------------------------
 // Per-line scroll fetch
 //
@@ -757,7 +766,7 @@ always_ff @(posedge clk) begin
             // has been filled; without it the meter never reads zero and stops being a
             // signal at all.
             if (fstate == T_DONE) primed <= 1'b1;
-            else if (primed && ~hblank && ~vblank) fetch_miss <= fetch_miss + 16'd1;
+            else if (primed && fetch_visible) fetch_miss <= fetch_miss + 16'd1;
         end
     end
 end

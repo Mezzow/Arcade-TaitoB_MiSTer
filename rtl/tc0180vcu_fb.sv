@@ -171,6 +171,14 @@ wire [7:0] erase_line = flip ? (8'd254 - vcnt[7:0])   : vcnt[7:0];
 
 // The off-screen lines, erased as extra work during the first 29 visible lines:
 //   vcnt 16..28 pays for lines 240..252,  vcnt 29..44 pays for lines 0..15.
+//
+// NOT mirrored under flip, unlike disp_line and erase_line above, and that is correct.
+// Flip reverses the ORDER the displayed lines are walked in, not the SET: the composite
+// formed during raster line v is shown at v+1 because of the horizontal mirror's line of
+// delay, so bitmap line 16 displays framebuffer line 239 and bitmap line 239 displays
+// framebuffer line 16. Displayed is 16..239 either way, so off-screen stays 240..255 and
+// 0..15. Mirroring this list would stop cleaning 0, 1, 15 and 240..252 - which hitice,
+// flipped and a CPU framebuffer reader, depends on.
 wire [7:0] extra_line = (vcnt < 9'd29) ? (8'd240 + (vcnt[7:0] - 8'd16))
                                        : (vcnt[7:0] - 8'd29);
 wire       extra_due  = (vcnt >= 9'd16) && (vcnt < 9'd45) && erase_en;

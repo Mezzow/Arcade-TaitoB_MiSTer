@@ -288,23 +288,52 @@ jt12_top #(
     .debug_view()
 );
 
-// The OKI is summed with the FM before the board's output filter, which is where the two
-// meet on the PCB. MAME routes the three FM channels at 0.25 and the OKI at 0.50, so the
-// OKI is doubled relative to jt03's already-summed FM output.
+// The OKI is summed with the FM before the board's output filter, which is where the two meet
+// on the PCB. Both weights come from MAME, and the normalisation each device is measured
+// against matters more than the route figure:
 //
-// Summed in 17 bits and saturated: jt03's output is full-scale 16-bit signed on its own, so
-// a loud chord under a loud sample overflows, and an overflow that wraps is not a quiet
-// distortion - it is a full-amplitude sign flip, i.e. a click on every peak.
-wire signed [15:0] oki_mix = cfg_m6295 ? {{2{oki_snd[13]}}, oki_snd} : 16'sd0;
-
-function automatic signed [15:0] sat_add(input signed [15:0] a, input signed [15:0] b);
-    logic signed [16:0] t;
-    t = {a[15], a} + {b[15], b};
-    sat_add = t[16] != t[15] ? (t[16] ? 16'sh8000 : 16'sh7FFF) : t[15:0];
+//   FM   route 0.80 against a device normalised by 32768   (ymfm_mame.h:275, put_int(..,32768))
+//   OKI  route 0.50 against a device normalised by 2048    (okim6295.cpp:352, add_int(..,2048))
+//                                                           and that 2048 is PER VOICE
+//
+// jt6295's per-voice output is 12-bit signed - the same +/-2048 as MAME's
+// oki_adpcm_state::clock(), with the same attenuation table - and jt6295_acc sums the four
+// voices into 14 bits. Sign-extending that 14-bit sum into 16 bits therefore put ONE voice at
+// 2048/32768 = 0.0625 of full scale against the FM's 1.0, where MAME asks for 0.50/0.80 =
+// 0.625. The OKI was a factor of ten - 20 dB - too quiet, which on viofight and hitice means
+// the voices and sound effects sit far under the music. The earlier comment here read the
+// three 0.25 routes as the FM; they are the SSG channels, and the FM is route 3 at 0.80.
+//
+// x8 puts one voice at 16384/32768 = 0.50 exactly. Four simultaneous loud voices saturate,
+// as they do in MAME, where four voices reach 2.0 before the final mix clips.
+//
+// SECOND, INDEPENDENT correction - family parity with the YM2610 boards. audio_mix's cascade
+// gain was calibrated on jt10, whose accumulator HALVES the FM (`opext >>> 1` in jt10_acc)
+// where MAME routes the YM2610's FM at 0.75. jt03 does no such halving, so a YM2203 board
+// arrived at the shared mixer about 6 dB hot - measured at +7.08 dB against MAME's own capture
+// of hitice. Scaling the finished board mix by 0.5/0.75 puts the two families in
+// the same units before the cascade and leaves the YM2610 path, which is already calibrated,
+// untouched.
+//
+// The sum is kept at full width and saturated ONCE, at the end. jt03's output is full-scale
+// 16-bit signed on its own, so a loud chord under a loud sample overflows, and an overflow
+// that wraps is not a quiet distortion - it is a full-amplitude sign flip, a click on every
+// peak.
+//
+// Q8 weights: 205 = 0.801 (MAME's FM 0.80), 2048 = 8<<8 (MAME's OKI 0.50 against its own
+// 2048-per-voice normalisation), 171 = 0.668 (the family gain above).
+function automatic signed [15:0] board_mix(input signed [15:0] fm, input signed [13:0] oki);
+    logic signed [25:0] q8;
+    logic signed [35:0] q16;
+    q8  = (fm * 26'sd205) + (cfg_m6295 ? (oki * 26'sd2048) : 26'sd0);
+    q16 = q8 * 36'sd171;
+    board_mix = (q16 >>> 16) >  36'sd32767 ? 16'sh7FFF
+              : (q16 >>> 16) < -36'sd32768 ? 16'sh8000
+              : 16'(q16 >>> 16);
 endfunction
 
-assign audio_left   = cfg_ym2203 ? sat_add(snd3_left,  oki_mix) : snd10_left;
-assign audio_right  = cfg_ym2203 ? sat_add(snd3_right, oki_mix) : snd10_right;
+assign audio_left   = cfg_ym2203 ? board_mix(snd3_left,  oki_snd) : snd10_left;
+assign audio_right  = cfg_ym2203 ? board_mix(snd3_right, oki_snd) : snd10_right;
 assign psg_snd      = cfg_ym2203 ? psg3       : psg10;
 assign audio_sample = cfg_ym2203 ? sample3    : sample10;
 
