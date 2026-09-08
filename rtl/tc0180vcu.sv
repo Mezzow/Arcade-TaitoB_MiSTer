@@ -283,9 +283,11 @@ wire        upper_we       = sel_upper & wr;
 wire [15:0] upper_q;
 
 // The scroll fetch and the sprite rasteriser must not share this RAM's single read port.
-// The read path is two cycles deep - `upper_sp_addr` is a register and the RAM registers
+// The read path is two cycles deep - the address is a register and the RAM registers
 // its output again - so a capture state consumes the data for the address set TWO states
-// earlier. Any stall of the sprite engine (holding `upper_sp_addr` still while another
+// earlier. (The rasteriser now walks a snapshot, `spr_shadow` below, with the same
+// two-cycle path, so the note still applies to it.) Any stall of the sprite engine
+// (holding `upper_sp_addr` still while another
 // fetcher borrows the port) breaks that pipeline: on resume `upper_rd_q` carries data for
 // the current address, not the one two states back, and the next capture latches a wrong
 // word into a sprite field. Stalling cannot repair this, because stalling is what breaks it.
@@ -323,6 +325,36 @@ vcu_ram16 #(.WIDTHAD(10)) scroll_ram(
 
     .addr_b(scroll_rd_addr[9:0]),
     .q_b(scroll_rd_q)
+);
+
+// Private snapshot of the sprite list, taken at vblank start, walked by the rasteriser.
+//
+// The walk used to read the list live, entry by entry, across the whole frame. viofight's
+// character select rewrites the entire list every frame starting 670 us after vblank start
+// (measured in MAME: ascending, entry 0 -> 340, finished by visible line 23) and re-packs
+// it whenever the selection border blinks. The live walk crossed that rewrite around entry
+// 160 and drew a chain head from one layout with its links from the other: a fifth of the
+// screen wrong on one frame in eight, which is the "heavy flicker" reported on that screen.
+// The same mechanism, once per object appearing or leaving, is very likely the occasional
+// in-game flicker reported with it, though only the character select was measured.
+// MAME reads the whole list once at vblank start (tc0180vcu.cpp, vblank_update),
+// the only model consistent with Taito writing the list during vblank. So: 3264 words
+// copied through upper RAM port B in 3264 clocks (61 us) before the walk starts, and the
+// walk reads the copy. Port B of the main array now belongs to the copy alone.
+logic [11:0] spr_rd_addr;    // the walk's read address into the snapshot
+wire  [15:0] spr_rd_q;
+reg   [11:0] copy_wa;        // snapshot write address: upper_sp_addr one cycle later,
+reg          copy_we;        // when upper_rd_q carries that word
+
+vcu_ram16 #(.WIDTHAD(12)) spr_shadow(
+    .clk(clk),
+    .addr_a(copy_wa),
+    .data_a(upper_rd_q),
+    .be_a({2{copy_we}}),
+    .q_a(),
+
+    .addr_b(spr_rd_addr),
+    .q_b(spr_rd_q)
 );
 
 // ------------------------------------------------------------------------------------
@@ -890,6 +922,7 @@ endfunction
 
 typedef enum bit [4:0] {
     SP_IDLE,
+    SP_COPY, SP_COPY_END,
     SP_A0, SP_A1, SP_A2, SP_A3, SP_A4, SP_A5, SP_A6, SP_A7,
     SP_DECODE, SP_CLIP,
     SP_ROW, SP_FETCH_L, SP_WAIT_L, SP_FETCH_R, SP_WAIT_R,
@@ -1104,21 +1137,32 @@ always_ff @(posedge clk) begin
             x_no       <= 8'd0;
             y_no       <= 8'd0;
             g_valid    <= 1'b0;
-            spstate    <= SP_A0;
+            upper_sp_addr <= 13'd0;
+            spstate    <= SP_COPY;
         end else begin
             case (spstate)
                 SP_IDLE: ;
 
-                // Six words per entry out of the shared upper RAM, one address per cycle
-                // with the data trailing two states behind.
-                SP_A0: begin upper_sp_addr <= {spr_i, 3'd0} + 13'd0; spstate <= SP_A1; end
-                SP_A1: begin upper_sp_addr <= {spr_i, 3'd0} + 13'd1; spstate <= SP_A2; end
-                SP_A2: begin upper_sp_addr <= {spr_i, 3'd0} + 13'd2; spstate <= SP_A3; s_code  <= upper_rd_q; end
-                SP_A3: begin upper_sp_addr <= {spr_i, 3'd0} + 13'd3; spstate <= SP_A4; s_color <= upper_rd_q; end
-                SP_A4: begin upper_sp_addr <= {spr_i, 3'd0} + 13'd4; spstate <= SP_A5; s_xraw  <= upper_rd_q; end
-                SP_A5: begin upper_sp_addr <= {spr_i, 3'd0} + 13'd5; spstate <= SP_A6; s_yraw  <= upper_rd_q; end
-                SP_A6: begin spstate <= SP_A7;     s_zoom <= upper_rd_q; end
-                SP_A7: begin spstate <= SP_DECODE; s_cnts <= upper_rd_q; end
+                // Snapshot the list before walking it: words 0..3263 of upper RAM through
+                // port B into spr_shadow, one per clock. The write trails the read address
+                // by the RAM's one cycle of latency (copy_wa/copy_we, below the engine).
+                SP_COPY: begin
+                    if (upper_sp_addr == 13'd3263) spstate <= SP_COPY_END;
+                    else upper_sp_addr <= upper_sp_addr + 13'd1;
+                end
+                // One cycle for the last word to land before the walk's first read.
+                SP_COPY_END: spstate <= SP_A0;
+
+                // Six words per entry out of the snapshot, one address per cycle with the
+                // data trailing two states behind.
+                SP_A0: begin spr_rd_addr <= {spr_i, 3'd0} + 12'd0; spstate <= SP_A1; end
+                SP_A1: begin spr_rd_addr <= {spr_i, 3'd0} + 12'd1; spstate <= SP_A2; end
+                SP_A2: begin spr_rd_addr <= {spr_i, 3'd0} + 12'd2; spstate <= SP_A3; s_code  <= spr_rd_q; end
+                SP_A3: begin spr_rd_addr <= {spr_i, 3'd0} + 12'd3; spstate <= SP_A4; s_color <= spr_rd_q; end
+                SP_A4: begin spr_rd_addr <= {spr_i, 3'd0} + 12'd4; spstate <= SP_A5; s_xraw  <= spr_rd_q; end
+                SP_A5: begin spr_rd_addr <= {spr_i, 3'd0} + 12'd5; spstate <= SP_A6; s_yraw  <= spr_rd_q; end
+                SP_A6: begin spstate <= SP_A7;     s_zoom <= spr_rd_q; end
+                SP_A7: begin spstate <= SP_DECODE; s_cnts <= spr_rd_q; end
 
                 SP_DECODE: begin
                     if (start_big)      heads_acc <= heads_acc + 16'd1;
@@ -1270,6 +1314,12 @@ always_ff @(posedge clk) begin
             endcase
         end
     end
+end
+
+// Snapshot write side: the word for upper_sp_addr is on upper_rd_q one cycle later.
+always_ff @(posedge clk) begin
+    copy_wa <= upper_sp_addr[11:0];
+    copy_we <= (spstate == SP_COPY);
 end
 
 // ------------------------------------------------------------------------------------
