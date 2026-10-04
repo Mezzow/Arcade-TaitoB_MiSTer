@@ -7,7 +7,7 @@
 // different dot clocks and totals:
 //
 //   Taito F2   26.686 MHz / 4 = 6.6715 MHz,  H 424 x V 262  -> 15.735 kHz / 60.06 Hz
-//   Taito B    27.164 MHz / 4 = 6.791  MHz,  H 448 x V 253  -> 15.158 kHz / 59.92 Hz
+//   Taito B    27.164 MHz / 4 = 6.791  MHz,  H 440 (+17 clk) x V 256 -> 15.360 kHz / 60.000 Hz
 //
 // Reusing F2's numbers would run the game about 2% slow, so clk_sys is 54.328 MHz - exactly
 // 8 x the Taito B dot clock. ce_13m is clk_sys / 4 and this module halves it again, so
@@ -21,28 +21,29 @@
 // alternate between 3520 and 3521 - the RetroTINK 4K DV1 black lines of issue #1.
 // See TaitoB.sv's clock-enable block.
 //
-// THE TOTALS ARE A JUDGEMENT CALL. MAME does not raw-configure
-// this screen, so H and V total are undocumented. What is known:
+// THE RASTER MATCHES THE MISTER RYU JIN CORE (MiSTer_Ryu_Jin, rj_video_timing.sv). That core
+// runs MAME's Taito B screen as 256 lines at exactly 60 Hz: 446 dots of 14 clocks plus 6 idle
+// clocks = 6250 clocks of 96 MHz per line (15.36 kHz), HSync dots 344-375, VSync lines
+// 244-246. This module produces the same raster from this core's 54.328 MHz clk_sys - a
+// standard 15 kHz raster for any CRT, verified on a consumer CRT over component and RGB:
 //
-//   * visible area is 320 x 224 (MAME visarea 0-319 x 16-239)
-//   * Guru measured HSync 15.1782 kHz and VSync 60.00000 Hz on a real PCB
+//   line   = 440 dots x 8 clocks + 17 idle clocks = 3537 clocks = 65.104 us = 15.360 kHz
+//   frame  = 256 lines = 905,472 clocks = 60.000 Hz (MAME's rate; PCB measured 60.00 Hz)
+//   HSync  = dots 344..375 (24 dots after the last active one, 32 wide = 4.71 us)
+//   VSync  = lines 244..246
 //
-// Those two measurements are mutually inconsistent with a 6.791 MHz dot clock: they imply
-// H x V = 113183, i.e. H = 447.4 at V = 253, which is not an integer. One of the measured
-// figures carries more error than a crystal ever would, so the totals have to be chosen.
+// Every pixel is still exactly 8 clocks of CLK_VIDEO, the rule this core's Direct Video and
+// scandoubler fixes depend on; the 17 idle clocks sit at the end of horizontal blanking,
+// where neither the scandoubler (it measures the pixel period during active video) nor
+// Direct Video's per-line pixel-repeat reading sees them - the same arrangement as the Ryu
+// Jin core's 6 idle clocks. ce_13m (the TC0260DAR's double-rate enable) is generated here
+// with the same phase and gap. 440 = 55 tiles keeps the total a multiple of 8.
 //
-//   H=447, V=253 -> 15.192 kHz / 60.049 Hz   (closest to both measurements)
-//   H=448, V=253 -> 15.158 kHz / 59.915 Hz   <- chosen
+// Guru's PCB measurement (HSync 15.1782 kHz, VSync 60.000 Hz) implies 253 lines; this
+// raster keeps the frame rate and changes the line count, as the Ryu Jin core does.
 //
-// H=448 is chosen because a total that is a multiple of 8 is the norm for tile-based video
-// hardware - it keeps the tile fetch pipeline aligned with the raster. 448 = 56 tiles. The 0.14% refresh difference is well inside
-// normal arcade variance and the MiSTer scaler handles it.
-//
-// Revisit if the game's own timing (music tempo, attract-mode length) measurably disagrees
-// with MAME.
-//
-// Sync position inside the blanking interval is not documented anywhere, so it is centred:
-// 128 pixels of hblank with a 32-pixel front porch, 64-pixel sync, 32-pixel back porch.
+// sync_fix (OSD "Consumer CRT Sync", default On) picks the HSync width: On = 32 dots, the
+// Ryu Jin core's pulse; Off = 64 dots. It is applied at the frame boundary.
 //
 // VERTICAL ORIGIN: vcnt is the TC0180VCU's own bitmap line, not the 0-based visible line.
 // MAME renders Taito B into a 512x256 bitmap and shows visarea y 16..239, so the visible
@@ -53,9 +54,10 @@
 
 module taitob_video_timing(
     input             clk,
-    input             ce_13m,      // clk_sys / 4 = 13.582 MHz
+    input             sync_fix,    // 1: 32-dot HSync (see above)
 
-    output            ce_pixel,    // 6.791 MHz
+    output            ce_13m,      // 2x the dot rate, for the TC0260DAR; none in the idle clocks
+    output            ce_pixel,    // 6.791 MHz, every 8th clock outside the idle clocks
 
     output reg  [8:0] hcnt,
     output reg  [8:0] vcnt,
@@ -66,23 +68,30 @@ module taitob_video_timing(
     output reg        vblank
 );
 
-localparam [8:0] H_TOTAL   = 9'd448;
-localparam [8:0] H_VISIBLE = 9'd320;
-localparam [8:0] HS_START  = 9'd352;   // 32px front porch after blanking starts
-localparam [8:0] HS_END    = 9'd415;   // 64px wide
+localparam [11:0] LINE_CLKS = 12'd3537;   // 440 dots x 8 + 17 idle
+localparam [11:0] DOT_CLKS  = 12'd3520;
 
-localparam [8:0] V_TOTAL   = 9'd253;
+localparam [8:0] H_TOTAL   = 9'd440;
+localparam [8:0] H_VISIBLE = 9'd320;
+localparam [8:0] HS_START  = 9'd344;   // 24 dots after blanking starts (Ryu Jin core)
+localparam [8:0] HS_END    = 9'd407;   // 64 dots wide (sync_fix = 0)
+localparam [8:0] HS_END_FIX = 9'd375;  // 32 dots wide (sync_fix = 1), as the Ryu Jin core
+
+localparam [8:0] V_TOTAL   = 9'd256;
 localparam [8:0] V_START   = 9'd16;    // first visible line - see the note above
 localparam [8:0] V_END     = 9'd239;   // last visible line
-localparam [8:0] VS_START  = 9'd244;   // 4 lines front porch
+localparam [8:0] VS_START  = 9'd244;   // as the Ryu Jin core
 localparam [8:0] VS_END    = 9'd246;   // 3 lines wide
 
-reg ce_div;
+reg [11:0] lclk = 12'd0;
+reg fix = 1'b1;   // sync_fix, taken once per frame (On until the first frame boundary)
 
-assign ce_pixel = ce_13m & ce_div;
+wire in_dots = (lclk < DOT_CLKS);
+assign ce_13m   = in_dots && (lclk[1:0] == 2'd3);
+assign ce_pixel = in_dots && (lclk[2:0] == 3'd7);
 
 always_ff @(posedge clk) begin
-    if (ce_13m) ce_div <= ~ce_div;
+    lclk <= (lclk == LINE_CLKS - 12'd1) ? 12'd0 : lclk + 12'd1;
 
     if (ce_pixel) begin
         hcnt <= hcnt + 9'd1;
@@ -91,10 +100,13 @@ always_ff @(posedge clk) begin
             hcnt <= 9'd0;
             vcnt <= vcnt + 9'd1;
 
-            if (vcnt == V_TOTAL - 9'd1) vcnt <= 9'd0;
+            if (vcnt == V_TOTAL - 9'd1) begin
+                vcnt <= 9'd0;
+                fix  <= sync_fix;
+            end
         end
 
-        hsync  <= (hcnt >= HS_START) && (hcnt <= HS_END);
+        hsync  <= (hcnt >= HS_START) && (hcnt <= (fix ? HS_END_FIX : HS_END));
         hblank <= (hcnt >= H_VISIBLE);
         vsync  <= (vcnt >= VS_START) && (vcnt <= VS_END);
         vblank <= (vcnt < V_START) || (vcnt > V_END);

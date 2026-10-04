@@ -17,6 +17,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/rom_cache.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mame_keys.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/coin_pulse.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/taitob_orientation.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_mix.sv
 # Needed even though save states are deferred: rtl/ram.sv's ram_ss_adaptor /
 # m68k_ram_ss_adaptor reference the ssbus_if interface declared in savestates.sv, and

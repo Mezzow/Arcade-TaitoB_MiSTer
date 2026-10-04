@@ -43,6 +43,11 @@ module TC0180VCU(
     input             hblank,
     input             vblank,
 
+    // OSD Orientation = Flipped. Turns the whole picture 180 degrees through the chip's own
+    // flip path, on top of whatever the game's flip bit says. Taken at the start of vertical
+    // blank, so every displayed frame is entirely one way or the other.
+    input             osd_flip,
+
     // ---- Interrupts ----------------------------------------------------------------
     // Two outputs, encoded to 68000 IRQ levels by an external PAL. The mapping is
     // per-game and lives in taitob_board_config.sv - never assume it here.
@@ -199,11 +204,22 @@ wire [7:0] tx_bank1 = ctrl[5];
 
 assign dbg_ctrl = {ctrl[7], ctrl[6], ctrl[5], ctrl[4], ctrl[3], ctrl[2], ctrl[1], ctrl[0]};
 
-// Screen flip. Only rambo3 sets this bit, so nothing else in the family exercises it.
-// MAME's own comment block for this register is unreliable - it swaps BG and FG for
-// registers 0 and 1 - so the bit assignment was confirmed against MAME's rendered output
-// rather than its comments.
-wire flip = video_control[4];
+// Screen flip. rambo3 sets this bit itself, and every set with a "Flip Screen" DIP sets it
+// when the switch is on. MAME's own comment block for this register is unreliable - it
+// swaps BG and FG for registers 0 and 1 - so the bit assignment was confirmed against
+// MAME's rendered output rather than its comments.
+//
+// The OSD's Flipped orientation reuses the same path: the picture the chip produces with
+// flip set is the unflipped picture turned 180 degrees about the visible area (rows 16..239,
+// columns 0..319), every layer and the sprite framebuffer together, on the unchanged native
+// raster. So OSD Flipped is simply the game's bit inverted - and on a game that flips itself
+// (rambo3, or a DIP set to flip) it gives back the upright picture, which is what a 180
+// degree turn of that picture is. The OSD request is latched where vertical blank begins:
+// the first fetch of a visible line is at line 14 (flipped) or 15, long after.
+reg osd_flip_q = 1'b0;
+always_ff @(posedge clk) if (ce_pixel && hcnt == 9'd0 && vcnt == 9'd240) osd_flip_q <= osd_flip;
+
+wire flip = video_control[4] ^ osd_flip_q;
 assign screen_flip  = flip;
 assign fb_page_o    = fb_page;
 assign fb_erase_en  = ~video_control[0];
@@ -468,8 +484,8 @@ end
 // needs the prefetch to run two groups ahead, which also makes the end-of-line redirect
 // cover the last two groups instead of the last one.
 // ------------------------------------------------------------------------------------
-localparam [8:0] H_TOTAL = 9'd448;
-localparam [8:0] V_TOTAL = 9'd253;
+localparam [8:0] H_TOTAL = 9'd440;   // rtl/taitob_video_timing.sv
+localparam [8:0] V_TOTAL = 9'd256;
 localparam [8:0] V_START = 9'd16;    // first visible bitmap line; see taitob_video_timing.sv
 
 // Scroll RAM lives in upper RAM: device byte 13800 -> word 09C00 -> upper index 1C00.
@@ -493,7 +509,7 @@ wire [8:0] fetch_v     = flip ? (9'd254 - fetch_v_raw) : fetch_v_raw;
 // Will the group being fetched right now actually be shown? This is the gate the
 // missed-deadline meter needs, and it is NOT "the beam is not in hblank": because the fetch
 // runs two groups ahead and wraps onto the next line, the two groups that fill screen
-// columns 0-15 are fetched at hcnt 432 and 440 - inside hblank. Gating the meter on ~hblank
+// columns 0-15 are fetched at hcnt 424 and 432 - inside hblank. Gating the meter on ~hblank
 // therefore threw away exactly the misses that land at the left edge of the picture, and it
 // read zero by construction. fetch_h and fetch_v_raw already name the destination.
 wire fetch_visible = (fetch_h < 9'd320)
@@ -508,22 +524,61 @@ wire fetch_visible = (fetch_h < 9'd320)
 // used and the block base only moves when it fills. Resetting on bitmap line 0 anchors
 // the block grid where MAME's loop anchors it.
 //
-// The fetch runs once per line at hcnt 400 - inside hblank, after the last fetch that
-// still belongs to this line (hcnt 424) and before the first that belongs to the next
-// one (hcnt 432).
+// The fetch runs once per line at hcnt 400 - inside hblank, after the last fetch of a
+// visible column of this line (hcnt 304) and before the first fetch of the next line
+// (hcnt 424, where fetch_h wraps); those in between are for off-screen columns.
 // ------------------------------------------------------------------------------------
 wire [8:0] fg_lpb = 9'd256 - {1'b0, fg_scroll_reg};
 wire [8:0] bg_lpb = 9'd256 - {1'b0, bg_scroll_reg};
 
-reg  [7:0] fg_blk_base, bg_blk_base;
+reg  [7:0] fg_blk_base, bg_blk_base;     // block of the line being fetched (either walk)
+reg  [7:0] fg_ublk_base, bg_ublk_base;   // the unflipped walk's own position
 reg  [8:0] fg_blk_cnt,  bg_blk_cnt;
 
 wire       fg_new_blk = (next_v == 9'd0) | (fg_blk_cnt == fg_lpb);
 wire       bg_new_blk = (next_v == 9'd0) | (bg_blk_cnt == bg_lpb);
-wire [7:0] fg_base_n  = (next_v == 9'd0) ? 8'd0 : (fg_new_blk ? next_v[7:0] : fg_blk_base);
-wire [7:0] bg_base_n  = (next_v == 9'd0) ? 8'd0 : (bg_new_blk ? next_v[7:0] : bg_blk_base);
+wire [7:0] fg_base_n  = (next_v == 9'd0) ? 8'd0 : (fg_new_blk ? next_v[7:0] : fg_ublk_base);
+wire [7:0] bg_base_n  = (next_v == 9'd0) ? 8'd0 : (bg_new_blk ? next_v[7:0] : bg_ublk_base);
 wire [8:0] fg_cnt_n   = fg_new_blk ? 9'd1 : (fg_blk_cnt + 9'd1);
 wire [8:0] bg_cnt_n   = bg_new_blk ? 9'd1 : (bg_blk_cnt + 9'd1);
+
+// FLIPPED FRAMES WALK THE BLOCKS BOTTOM UP.
+//
+// Under flip the line fetched for raster line v is source row 254 - v (fetch_v, above), so
+// the rows arrive in descending order, 254 first. Each still has to take the pair of ITS
+// OWN block - floor(row / lines_per_block) * lines_per_block, the grid anchored at row 0 -
+// or a game with more than one block would show its scroll bands in mirrored order with
+// the wrong offsets. That is also what MAME does: its flipped clip rectangles mirror the
+// blocks (tc0180vcu.cpp, tilemap_draw). With a single block (reg 0x00, most of the set)
+// the two walks agree, which is why the unflipped walk looked right on rambo3.
+//
+// So walk downwards with m = row mod lines_per_block. A row with m == 0 is the first row of
+// its block; the row after it is the last row of the block below. Starting a frame needs
+// 254 mod lines_per_block, which a subtract loop keeps current (at most 254 clocks behind
+// a register write - about a sixth of a pixel line of the 7.4 lines it has after the last
+// visible fetch).
+reg  [8:0] fg_mod_r = 9'd254, bg_mod_r = 9'd254;
+reg  [7:0] fg_m254 = 8'd254,  bg_m254 = 8'd254;
+always_ff @(posedge clk) begin
+    if (fg_mod_r >= fg_lpb) fg_mod_r <= fg_mod_r - fg_lpb;
+    else begin fg_m254 <= fg_mod_r[7:0]; fg_mod_r <= 9'd254; end
+    if (bg_mod_r >= bg_lpb) bg_mod_r <= bg_mod_r - bg_lpb;
+    else begin bg_m254 <= bg_mod_r[7:0]; bg_mod_r <= 9'd254; end
+end
+
+reg  [7:0] fg_m, bg_m;                       // source row mod lines_per_block, flipped walk
+wire [7:0] flip_row_n = 8'd254 - next_v[7:0];
+wire       fg_new_f   = (next_v == 9'd0) | (fg_m == 8'd0);
+wire       bg_new_f   = (next_v == 9'd0) | (bg_m == 8'd0);
+wire [7:0] fg_m_n     = (next_v == 9'd0) ? fg_m254 : ((fg_m == 8'd0) ? (fg_lpb[7:0] - 8'd1) : (fg_m - 8'd1));
+wire [7:0] bg_m_n     = (next_v == 9'd0) ? bg_m254 : ((bg_m == 8'd0) ? (bg_lpb[7:0] - 8'd1) : (bg_m - 8'd1));
+
+wire       fg_new_sel  = flip ? fg_new_f : fg_new_blk;
+wire       bg_new_sel  = flip ? bg_new_f : bg_new_blk;
+wire [7:0] fg_base_sel = flip ? (flip_row_n - fg_m_n) : fg_base_n;
+wire [7:0] bg_base_sel = flip ? (flip_row_n - bg_m_n) : bg_base_n;
+// First visible fetch: under flip, screen line 16 is composited one raster line early.
+wire       first_vis   = flip ? (next_v == V_START - 9'd1) : (next_v == V_START);
 
 reg [15:0] sx_fg, sy_fg, sx_bg, sy_bg;
 
@@ -569,17 +624,17 @@ always_ff @(posedge clk) begin
         scroll_rd_addr <= 13'd0;
         sx_fg <= 16'd0; sy_fg <= 16'd0;
         sx_bg <= 16'd0; sy_bg <= 16'd0;
-        fg_blk_base <= 8'd0; fg_blk_cnt <= 9'd1;
-        bg_blk_base <= 8'd0; bg_blk_cnt <= 9'd1;
+        fg_blk_base <= 8'd0; fg_blk_cnt <= 9'd1; fg_ublk_base <= 8'd0; fg_m <= 8'd0;
+        bg_blk_base <= 8'd0; bg_blk_cnt <= 9'd1; bg_ublk_base <= 8'd0; bg_m <= 8'd0;
         fg_smp <= 1'b0; bg_smp <= 1'b0;
     end else begin
         case (sstate)
             S_IDLE: if (ce_pixel && hcnt == 9'd400) begin
-                fg_blk_base   <= fg_base_n; fg_blk_cnt <= fg_cnt_n;
-                bg_blk_base   <= bg_base_n; bg_blk_cnt <= bg_cnt_n;
-                fg_smp        <= fg_new_blk | (next_v == V_START);
-                bg_smp        <= bg_new_blk | (next_v == V_START);
-                scroll_rd_addr <= SCROLL_FG + {4'd0, fg_base_n, 1'b0};
+                fg_blk_base   <= fg_base_sel; fg_ublk_base <= fg_base_n; fg_blk_cnt <= fg_cnt_n; fg_m <= fg_m_n;
+                bg_blk_base   <= bg_base_sel; bg_ublk_base <= bg_base_n; bg_blk_cnt <= bg_cnt_n; bg_m <= bg_m_n;
+                fg_smp        <= fg_new_sel | first_vis;
+                bg_smp        <= bg_new_sel | first_vis;
+                scroll_rd_addr <= SCROLL_FG + {4'd0, fg_base_sel, 1'b0};
                 sstate        <= 3'd0;
             end
             // upper_rd_addr is a register and the RAM registers it again, so the data for
