@@ -1,0 +1,13 @@
+# Fixed core: power-up, load (default orientation applied), Consumer CRT Sync on/off
+0 segment powerup
+3 segment loading
+3 load_rom
+3 load_dip
+30 segment running_syncfix_on
+45 segment syncfix_off
+45 status 19 19 1
+52 segment syncfix_on_again
+52 status 19 19 0
+60 shot native60
+62 fbshot rotated62
+64 end

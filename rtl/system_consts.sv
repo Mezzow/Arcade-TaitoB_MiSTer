@@ -132,9 +132,16 @@ package system_consts;
     parameter bit [2:0] IOL_SBM   = 3'd3;
     parameter bit [2:0] IOL_RPUNC = 3'd4;
 
+    // The two-byte board record that opens every MRA's ROM stream.
+    //   byte 0: game_t
+    //   byte 1: bits 1:0 the set's MAME orientation in quarter turns clockwise (0 = ROT0,
+    //           1 = ROT90, 2 = ROT180, 3 = ROT270), the OSD Orientation default -
+    //           rtl/taitob_orientation.sv. Several configs are shared by sets of both
+    //           orientations (selfeena / ryujin / yukiwo), so game_t cannot say it.
+    //           Bits 7:2 are reserved and zero.
     typedef struct packed {
         game_t    game;
-        bit [7:0] unused;
+        bit [7:0] orient;
     } board_cfg_t;
 
 endpackage

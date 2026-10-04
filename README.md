@@ -92,7 +92,9 @@ hardware but not put through the golden-frame gate.
 
 ## Installation
 
-1. Copy `releases/Arcade-TaitoB_<date>.rbf` to `_Arcade/cores/` on the MiSTer SD card.
+1. Copy `releases/TaitoB_<date>.rbf` to `_Arcade/cores/` on the MiSTer SD card. The MRAs load
+   `<rbf>TaitoB</rbf>`; remove any older `TaitoB_*.rbf` or `Arcade-TaitoB_*.rbf` there so
+   MiSTer cannot pick up an old build.
 2. Copy the `.mra` files from `releases/` to `_Arcade/`.
 3. Put the ROMs in `games/mame/`: one zip per game, named after the `<setname>` in the MRA (for
    example `pbobble.zip`). The MRAs describe the MAME 0.277 ROM sets.
@@ -103,9 +105,34 @@ hardware but not put through the golden-frame gate.
 - DIP switches come from each MRA's `<switches>` block. Puzzle Bobble and Space Invaders DX have
   no DIP switches; they keep their settings in the 93C46 EEPROM, which the core saves through the
   MiSTer framework (`Save EEPROM` in the OSD).
-- OSD: aspect ratio, scandoubler effects, scaling, orientation, analog H/V position, consumer-CRT
+- OSD: orientation; aspect ratio, scandoubler effects, analog H/V position, consumer-CRT
   sync; rotary input mode (joystick, paddle, spinner, D-pad) with sensitivity and invert; OSD
   pause with optional dimming; service mode; reset.
+
+## Video output and orientation
+
+The analog output carries a standard 15 kHz raster for any 15 kHz CRT (verified on a consumer
+CRT over component and RGB), matching the MiSTer Ryu Jin core (320 x 224 active, 15.360 kHz / 60.000 Hz)
+from the moment the core is loaded, through the ROM download and every reset. Details,
+measurements and the reasoning are in [`docs/VIDEO.md`](docs/VIDEO.md).
+
+**Orientation** (top of the OSD), the same choices as the Namco NA-1/NA-2 and NB-1 cores:
+
+| OSD | CRT / analog / Direct Video | HDMI scaler |
+|---|---|---|
+| Horizontal | as the board emits it | same |
+| Vertical CCW | unchanged | turned 90 degrees counter-clockwise (the top goes to the left) |
+| Vertical CW | unchanged | turned 90 degrees clockwise (the top goes to the right) |
+| Flipped | turned 180 degrees | turned 180 degrees |
+
+Flipped is made natively, in the TC0180VCU's own flip path, so a CRT shows it too. The two
+Vertical modes exist only on the HDMI scaler; the CRT keeps the native raster for a physically
+rotated monitor. The reported aspect ratio follows the scaler picture, and the joystick always
+keeps the game's own directions. Ashura Blaster, Master of Weapon, Ryu Jin and Yukiwo (MAME
+ROT270) default to Vertical CCW, everything else to Horizontal, until a choice is saved.
+
+**Consumer CRT Sync** (Video Settings, default On) narrows HSync to the standard 4.7 us; Off
+restores the original 9.4 us pulse. Nothing else changes.
 
 ## Known limitations
 
@@ -149,7 +176,9 @@ to `output_files/Arcade-TaitoB.rbf`.
   the device are pixel-identical to MAME frames. The 23 further sets were booted to attract mode
   on the device as well.
 
-The verification harness is not part of this repository.
+That golden-frame harness is not part of this repository. `sim/` holds the whole-core
+Verilator bench used for the video output and orientation work - see
+[`sim/README.md`](sim/README.md).
 
 ## Licence
 

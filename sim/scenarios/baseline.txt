@@ -1,0 +1,14 @@
+# Output timing of the core as it is: power-up, ROM load, boot, OSD reset, scandoubler
+0 segment powerup
+3 segment loading
+3 load_rom
+3 load_dip
+30 segment running
+50 segment osd_reset
+50 reset_pulse
+56 segment running2
+70 segment scandoubler_31k
+70 sd 1
+76 segment back_to_15k
+76 sd 0
+82 end

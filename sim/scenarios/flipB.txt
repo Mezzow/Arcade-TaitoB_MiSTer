@@ -1,0 +1,8 @@
+# Flipped for the whole run, otherwise identical to flipA (user choice saved: bit 42 set)
+0 status 42 40 7
+3 load_rom
+3 load_dip
+730 shot b730
+750 shot b750
+770 shot b770
+772 end
