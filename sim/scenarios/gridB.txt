@@ -1,0 +1,6 @@
+0 status 42 40 7
+3 load_rom
+3 load_dip
+200 shot b200
+230 shot b230
+232 end

@@ -1,0 +1,39 @@
+# Mode cycle on one run: default orientation, timing per mode, controls, transitions
+0 segment powerup
+3 segment loading
+3 load_rom
+3 load_dip
+30 segment boot_default_ccw
+700 segment mode_ccw
+700 joy 0 8
+702 probe_joy ccw_up
+704 shotpair ccw
+708 segment mode_cw
+708 status 41 40 2
+712 probe_joy cw_up
+714 shotpair cw
+718 segment mode_flipped
+718 status 41 40 3
+722 probe_joy flipped_up
+724 shotpair flipped
+728 segment mode_horizontal
+728 status 41 40 0
+732 probe_joy horizontal_up
+734 shotpair horizontal
+738 segment dv_cw
+738 status 41 40 2
+738 dv 1
+744 shotpair dv_cw
+748 segment dv_flipped
+748 status 41 40 3
+752 shotpair dv_flipped
+756 segment dv_off_flipped
+756 dv 0
+760 segment osd_reset_flipped
+760 reset_pulse
+766 segment syncfix_off_flipped
+766 status 19 19 1
+772 segment end
+772 status 19 19 0
+774 joy 0 0
+776 end

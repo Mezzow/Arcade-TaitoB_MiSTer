@@ -1,0 +1,8 @@
+# Horizontal for the whole run (user choice saved: bit 42 set)
+0 status 42 40 4
+3 load_rom
+3 load_dip
+730 shot a730
+750 shot a750
+770 shot a770
+772 end
