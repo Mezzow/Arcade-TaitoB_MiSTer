@@ -1,3 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Taito B System core for MiSTer (Arcade-TaitoB). See README for credits.
+//
+// Video hand-off to the MiSTer framework, built the way the MiSTer Ryu Jin core
+// (MiSTer_Ryu_Jin, RyuJin.sv) does it, for 15 kHz CRTs on any analog output (verified on a
+// consumer CRT over component and RGB) as well as HDMI:
+//
+//   * the raster goes straight into the framework's own arcade_video (sys/arcade_video.v,
+//     24-bit), which registers it on the pixel enable, re-times VSync onto the HSync edge
+//     and VBlank onto the line start, and runs video_mixer (gamma, scandoubler, HQ2x,
+//     scanline Fx). No video_freak and no sync regeneration in between;
+//   * RGB is forced to black outside the active area, as the Ryu Jin core's renderer does;
+//   * screen_rotate (Vertical CW/CCW on HDMI) sits after it, as in that core.
+//
+// The OSD's Analog Video H-Pos/V-Pos still work through jtframe_resync, but only while one
+// of them is non-zero (chosen at the start of a frame): at 0/0, the default, the sync goes
+// to arcade_video exactly as the raster produced it.
 module video_path(
     input             CLK_VIDEO,
 
@@ -7,10 +24,8 @@ module video_path(
     input             forced_scandoubler,
     input       [2:0] scandoubler_fx,
     input       [1:0] ar,
-    input       [1:0] scale,
-    input             rotate,
+    input             no_rotate,     // rtl/taitob_orientation.sv: 0 = Vertical CW/CCW on HDMI
     input             rotate_ccw,
-    input             flip,
     output            video_rotated,
 
     // Core video signal
@@ -23,9 +38,7 @@ module video_path(
     input       [7:0] core_g,
     input       [7:0] core_b,
 
-    // Scaler info in/out
-    input      [11:0] HDMI_WIDTH,
-    input      [11:0] HDMI_HEIGHT,
+    // Scaler info out
     output     [12:0] VIDEO_ARX,
     output     [12:0] VIDEO_ARY,
 
@@ -56,9 +69,8 @@ module video_path(
     output      [1:0] VGA_SL
 );
 
-wire resync_hs, resync_vs;
-
-// H/V offset
+// ---- optional H/V position (OSD), off by default ----
+wire jt_hs, jt_vs;
 jtframe_resync #(5) jtframe_resync
 (
     .clk(CLK_VIDEO),
@@ -69,63 +81,55 @@ jtframe_resync #(5) jtframe_resync
     .LHBL(~core_hb),
     .hoffset(-hoffset), // flip the sign
     .voffset(-voffset),
-    .hs_out(resync_hs),
-    .vs_out(resync_vs)
+    .hs_out(jt_hs),
+    .vs_out(jt_vs)
 );
 
-wire VGA_DE_MIXER;
-wire [2:0] sl = scandoubler_fx ? scandoubler_fx - 1'd1 : 3'd0;
-wire use_scandoubler = scandoubler_fx || forced_scandoubler;
+// jtframe_resync rebuilds the pulses from the previous frame of each field parity, so it is
+// only trusted once it has run eight frames, and only used while an offset is set. The
+// choice is made at the start of vertical blank. Its output is one pixel later than the
+// raw pulses; at 0/0 the raw pulses are used.
+reg [3:0] resync_frames = 4'd0;
+reg       use_resync = 1'b0, old_vb = 1'b0;
+always @(posedge CLK_VIDEO) if (core_ce_pix) begin
+    old_vb <= core_vb;
+    if (core_vb & ~old_vb) begin
+        if (~resync_frames[3]) resync_frames <= resync_frames + 4'd1;
+        use_resync <= resync_frames[3] && (hoffset != 5'd0 || voffset != 5'd0);
+    end
+end
+wire av_hs_in = use_resync ? jt_hs : core_hs;
+wire av_vs_in = use_resync ? jt_vs : core_vs;
 
-assign VGA_SL  = sl[1:0];
+// ---- arcade_video, as the Ryu Jin core ----
+wire [23:0] av_rgb = (core_hb | core_vb) ? 24'd0 : {core_r, core_g, core_b};
 
-video_mixer #(.LINE_LENGTH(324), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
+arcade_video #(.WIDTH(320), .DW(24), .GAMMA(1)) arcade_video
 (
-    .CLK_VIDEO(CLK_VIDEO),
+    .clk_video(CLK_VIDEO),
     .ce_pix(core_ce_pix),
-    .CE_PIXEL(CE_PIXEL),
-
-    .scandoubler(use_scandoubler),
-    .hq2x(scandoubler_fx == 1),
-    .gamma_bus(gamma_bus),
-
-    .HDMI_FREEZE(1'b0),
-    .freeze_sync(),
-
+    .RGB_in(av_rgb),
     .HBlank(core_hb),
     .VBlank(core_vb),
-    .HSync(resync_hs),
-    .VSync(resync_vs),
-
-    .R(core_r),
-    .G(core_g),
-    .B(core_b),
-
+    .HSync(av_hs_in),
+    .VSync(av_vs_in),
+    .CLK_VIDEO(),
+    .CE_PIXEL(CE_PIXEL),
     .VGA_R(VGA_R),
     .VGA_G(VGA_G),
     .VGA_B(VGA_B),
-    .VGA_VS(VGA_VS),
     .VGA_HS(VGA_HS),
-    .VGA_DE(VGA_DE_MIXER)
-);
-
-video_freak video_freak(
-    .CLK_VIDEO(CLK_VIDEO),
-    .CE_PIXEL(CE_PIXEL),
     .VGA_VS(VGA_VS),
-    .HDMI_WIDTH(HDMI_WIDTH),
-    .HDMI_HEIGHT(HDMI_HEIGHT),
     .VGA_DE(VGA_DE),
-    .VIDEO_ARX(VIDEO_ARX),
-    .VIDEO_ARY(VIDEO_ARY),
-
-    .VGA_DE_IN(VGA_DE_MIXER),
-    .ARX((!ar) ? ( rotate ? 12'd3 : 12'd4 ) : (ar - 1'd1)),
-    .ARY((!ar) ? ( rotate ? 12'd4 : 12'd3 ) : 12'd0),
-    .CROP_SIZE(0),
-    .CROP_OFF(0),
-    .SCALE(scale)
+    .VGA_SL(VGA_SL),
+    .fx(scandoubler_fx),
+    .forced_scandoubler(forced_scandoubler),
+    .gamma_bus(gamma_bus)
 );
+
+// the aspect of the picture the scaler actually shows: 3:4 only while it is turned
+assign VIDEO_ARX = (!ar) ? (video_rotated ? 13'd3 : 13'd4) : {11'd0, ar - 2'd1};
+assign VIDEO_ARY = (!ar) ? (video_rotated ? 13'd4 : 13'd3) : 13'd0;
 
 wire [28:0] rotate_addr;
 wire [63:0] rotate_data;
@@ -139,9 +143,9 @@ screen_rotate screen_rotate(
     .VGA_R, .VGA_G, .VGA_B,
     .VGA_HS, .VGA_VS, .VGA_DE,
 
-    .rotate_ccw, // MJD_TODO
-    .no_rotate(~rotate),
-    .flip(flip),
+    .rotate_ccw,
+    .no_rotate,
+    .flip(1'b0),        // Flipped is native (TC0180VCU), never a scaler-only 180
     .video_rotated,
 
     .FB_EN,

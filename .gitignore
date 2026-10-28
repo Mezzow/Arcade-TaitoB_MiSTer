@@ -6,3 +6,7 @@ build_id.v
 *.qws
 roms/
 **/.DS_Store
+sim/work/
+sim/obj/
+sim/out/
+sim/obj_orient/

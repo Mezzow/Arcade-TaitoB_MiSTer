@@ -37,7 +37,7 @@ module tc0180vcu_fb(
     input             ce_pixel,
     input       [8:0] hcnt,
     input       [8:0] vcnt,
-    input             visible_line,   // this raster line is inside the visible window
+    input             visible_line,   // this raster line is inside the visible window (unused: see erase_shown)
 
     input             disp_page,      // page being displayed, and therefore erased
     input             erase_en,       // ~video_control[0]
@@ -107,8 +107,8 @@ function automatic [31:0] line_addr(input bit page, input bit [7:0] y);
     line_addr = FB_BASE + {13'd0, page, y, 10'd0};
 endfunction
 
-localparam [8:0] H_TOTAL = 9'd448;
-localparam [8:0] V_TOTAL = 9'd253;
+localparam [8:0] H_TOTAL = 9'd440;   // rtl/taitob_video_timing.sv
+localparam [8:0] V_TOTAL = 9'd256;
 
 // ------------------------------------------------------------------------------------
 // Line buffer - two lines of 128 x 64 bits (four 16-bit pixels per entry)
@@ -126,8 +126,8 @@ dualport_ram_unreg #(.WIDTH(64), .WIDTHAD(8)) line_buffer(
 
 // Display reads the buffer holding this line; scanout fills the other one.
 //
-// The selector is an explicit toggle, NOT vcnt[0]. V_TOTAL is 253 - an odd number - so at
-// the frame wrap line 252 is followed by line 0 and the two have the same parity. Keying
+// The selector is an explicit toggle, NOT vcnt[0]. V_TOTAL was 253 - an odd number - so at
+// the frame wrap line 252 was followed by line 0 and the two had the same parity. Keying
 // the buffer on the line's LSB therefore has the fetch of line 0 overwrite line 252 while
 // it is still being displayed. Line 252 is inside vblank, so that would be invisible today,
 // but it would stop being invisible the moment the raster totals were retuned.
@@ -169,19 +169,28 @@ wire [8:0] next_v = (vcnt == V_TOTAL - 9'd1) ? 9'd0 : (vcnt + 9'd1);
 wire [7:0] disp_line  = flip ? (8'd254 - next_v[7:0]) : next_v[7:0];
 wire [7:0] erase_line = flip ? (8'd254 - vcnt[7:0])   : vcnt[7:0];
 
-// The off-screen lines, erased as extra work during the first 29 visible lines:
-//   vcnt 16..28 pays for lines 240..252,  vcnt 29..44 pays for lines 0..15.
+// Erase only a DISPLAYED line, 16..239, and gate on that rather than on the raster being
+// visible. Unflipped they are the same test. Flipped they are not: line 239 is displayed
+// from raster line 15, which is in vblank, so a raster gate never erased it - stale sprite
+// pixels piled up on the first line of every flipped picture (found comparing OSD Flipped
+// against Horizontal in sim/scenarios/flipA/flipB) - and it erased line 15 at raster 239,
+// which the extra list below already covers.
+wire       erase_shown = (erase_line >= 8'd16) && (erase_line <= 8'd239);
+
+// The off-screen lines, erased as extra work during the first 32 visible lines:
+//   vcnt 16..31 pays for lines 240..255,  vcnt 32..47 pays for lines 0..15.
+// (With 256 raster lines every framebuffer row 240..255 is a vblank line.)
 //
 // NOT mirrored under flip, unlike disp_line and erase_line above, and that is correct.
 // Flip reverses the ORDER the displayed lines are walked in, not the SET: the composite
 // formed during raster line v is shown at v+1 because of the horizontal mirror's line of
 // delay, so bitmap line 16 displays framebuffer line 239 and bitmap line 239 displays
 // framebuffer line 16. Displayed is 16..239 either way, so off-screen stays 240..255 and
-// 0..15. Mirroring this list would stop cleaning 0, 1, 15 and 240..252 - which hitice,
+// 0..15. Mirroring this list would stop cleaning 0, 1, 15 and 240..255 - which hitice,
 // flipped and a CPU framebuffer reader, depends on.
-wire [7:0] extra_line = (vcnt < 9'd29) ? (8'd240 + (vcnt[7:0] - 8'd16))
-                                       : (vcnt[7:0] - 8'd29);
-wire       extra_due  = (vcnt >= 9'd16) && (vcnt < 9'd45) && erase_en;
+wire [7:0] extra_line = (vcnt < 9'd32) ? (8'd240 + (vcnt[7:0] - 8'd16))
+                                       : (vcnt[7:0] - 8'd32);
+wire       extra_due  = (vcnt >= 9'd16) && (vcnt < 9'd48) && erase_en;
 
 typedef enum bit [2:0] {
     SC_IDLE, SC_RD_REQ, SC_RD_DATA, SC_ER_REQ, SC_ER_DATA, SC_EX_REQ, SC_EX_DATA
@@ -222,7 +231,7 @@ always_ff @(posedge clk) begin
                     sc_erase_line  <= erase_line;
                     sc_extra_line  <= extra_line;
                     sc_page        <= disp_page;
-                    sc_do_erase    <= erase_en & visible_line;
+                    sc_do_erase    <= erase_en & erase_shown;
                     sc_do_extra    <= extra_due;
                     sc_wr_sel      <= ~lb_sel;
                     sstate         <= SC_RD_REQ;
@@ -556,7 +565,7 @@ always_ff @(posedge clk) begin
             dbg_cpu_rd_ddr <= dbg_cpu_rd_ddr + 32'd1;
         // Armed where sc_do_erase is latched, using the same terms.
         if (ce_pixel && hcnt == SCAN_START_H && ~scan_line_done &&
-            sstate == SC_IDLE && (erase_en & visible_line))
+            sstate == SC_IDLE && (erase_en & erase_shown))
             dbg_erase_burst <= dbg_erase_burst + 32'd1;
     end
 end

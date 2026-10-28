@@ -43,6 +43,8 @@ assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
 assign HDMI_BLACKOUT = 0;
 assign HDMI_BOB_DEINT = 0;
+assign FB_FORCE_BLANK = 0;
+assign LED_USER = 0;
 
 assign AUDIO_R = AUDIO_L;
 assign AUDIO_S = 1;
@@ -58,12 +60,11 @@ assign BUTTONS = 0;
 localparam CONF_STR = {
     "TaitoB;;",
     "-;",
+    "O[41:40],Orientation,Horizontal,Vertical CCW,Vertical CW,Flipped;",
+    "-;",
     "P1,Video Settings;",
     "P1O[2:1],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
     "P1O[5:3],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
-    "P1O[7:6],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
-    "P1-;",
-    "P1O[8],Orientation,Horz,Vert;",
     "P1-;",
     "P1O[19],Consumer CRT Sync,On,Off;",
     "P1O[13:9],Analog Video H-Pos,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
@@ -170,7 +171,9 @@ wire        autosave = ~status[20];
 wire        info_req;
 wire [7:0]  info_index;
 
-wire [127:0] status_in = status;   // save states deferred; nothing to write back
+// The only status write-back is the orientation default (see ORIENTATION below).
+wire [127:0] status_in;
+wire         status_set;
 
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
@@ -188,7 +191,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
     .status(status),
     .status_menumask({direct_video}),
     .status_in(status_in),
-    .status_set(1'b0),
+    .status_set(status_set),
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),
@@ -470,7 +473,75 @@ assign ddr_host.rdata = DDRAM_DOUT;
 assign ddr_host.rdata_ready = DDRAM_DOUT_READY;
 assign ddr_host.busy = DDRAM_BUSY;
 
+// OSD "Consumer CRT Sync" (status[19] = 0 = On, the default): the EIA-width HSync and a
+// VSync that starts on an HSync edge. rtl/taitob_video_timing.sv has the numbers.
 wire sync_fix = ~status[19];
+
+// ------------------------------------------------------------------------------------
+// ORIENTATION
+//
+// status[41:40] is the OSD selector, decoded in rtl/taitob_orientation.sv (truth table
+// there): Horizontal, Vertical CCW, Vertical CW, Flipped - the Namco NA-1/NA-2 and NB-1
+// labels, order and encoding. status[8], the old Horz/Vert item, is retired and ignored.
+//
+// Default per set. The MRA's board record carries the set's MAME orientation in its second
+// byte (0 = ROT0, 3 = ROT270; rtl/system_consts.sv board_cfg_t.orient[1:0]). Once the
+// ROM load finishes, if status[42] is clear - the user has no saved choice for this set -
+// the core writes the upright-on-HDMI mode into [41:40] and sets [42] through hps_io's
+// status_set, and Main_MiSTer adopts it (user_io.cpp check_status_change). Main_MiSTer
+// keeps a CFG per MRA <setname>, so "Save settings" stores [42] with the user's own
+// choice and the default is never applied over it again; without a save every load
+// starts from the set's default. The native raster is untouched by every mode except
+// Flipped, so this default never changes what a CRT receives.
+// ------------------------------------------------------------------------------------
+wire [1:0] game_rot = board_cfg.orient[1:0];
+wire [1:0] orient_osd = status[41:40];
+wire [1:0] default_orient;
+wire       orient_no_rotate, orient_rotate_ccw, orient_native_flip;
+
+taitob_orientation orientation(
+    .orient(orient_osd),
+    .direct_video(direct_video),
+    .game_rot(game_rot),
+    .no_rotate(orient_no_rotate),
+    .rotate_ccw(orient_rotate_ccw),
+    .native_flip(orient_native_flip),
+    .default_orient(default_orient)
+);
+
+// "The load has finished" is rom_load_busy staying low for 1024 clocks after it was high:
+// in a DDR-mode load (MRA address=) it also drops for one clock between Main_MiSTer's
+// download and the core's own DDR3-to-SDRAM pass, before the board record has been read.
+reg        rom_seen   = 1'b0;
+reg [10:0] rom_idle   = 11'd0;
+reg        orient_set = 1'b0;
+always @(posedge clk_sys) begin
+    orient_set <= 1'b0;
+    if (rom_load_busy) begin
+        rom_seen <= 1'b1;
+        rom_idle <= 11'd0;
+    end else if (rom_seen) begin
+        rom_idle <= rom_idle + 11'd1;
+        if (rom_idle == 11'd1023) begin
+            rom_seen   <= 1'b0;
+            orient_set <= ~status[42];
+        end
+    end
+end
+assign status_set = orient_set;
+assign status_in  = {status[127:43], 1'b1, default_orient, status[39:0]};
+
+// The scaler-side modes change only at the start of vertical blank, so screen_rotate never
+// sees a frame that is half one direction. (Flipped is latched inside the TC0180VCU.)
+reg  old_core_vb = 1'b0;
+reg  rot_no_rotate = 1'b1, rot_ccw = 1'b0;
+always @(posedge clk_sys) begin
+    old_core_vb <= core_vb;
+    if (core_vb & ~old_core_vb) begin
+        rot_no_rotate <= orient_no_rotate;
+        rot_ccw       <= orient_rotate_ccw;
+    end
+end
 
 
 reg [7:0] analog_p1, analog_p2;
@@ -548,6 +619,7 @@ TaitoB TaitoB(
     .green(core_g),
     .blue(core_b),
     .sync_fix(sync_fix),
+    .osd_flip(orient_native_flip),
 
     // dip_sw is what the I/O chip's register reads, NOT its complement. The upstream F2 core
     // inverts twice - once here and once inside its game top - so the
@@ -620,8 +692,7 @@ assign DDRAM_CLK = clk_sys;
 
 wire [1:0] ar             = status[2:1];
 wire [2:0] scandoubler_fx = status[5:3];
-wire [1:0] scale          = status[7:6];
-wire       rotate         = status[8];
+// status[7:6] (the old Scale item) is retired with video_freak; see rtl/video_path.sv.
 wire [4:0] hoffset        = status[13:9];
 wire [4:0] voffset        = status[18:14];
 
@@ -660,16 +731,15 @@ video_path video_path(
     .hoffset, .voffset,
 
     .forced_scandoubler, .scandoubler_fx,
-    .ar, .scale,
+    .ar,
 
-    .rotate, .rotate_ccw(1), .flip(0),
+    .no_rotate(rot_no_rotate), .rotate_ccw(rot_ccw),
     .video_rotated,
 
     .core_ce_pix,
     .core_hs, .core_vs, .core_hb, .core_vb,
     .core_r(pause_r), .core_g(pause_g), .core_b(pause_b),
 
-    .HDMI_WIDTH, .HDMI_HEIGHT,
     .VIDEO_ARX, .VIDEO_ARY,
 
     .gamma_bus,
